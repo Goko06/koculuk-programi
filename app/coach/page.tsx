@@ -1,7 +1,30 @@
+import { createClient } from '@/lib/supabase/server';
+import { redirect } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Users, TrendingUp, Clock } from 'lucide-react';
 
-export default function CoachDashboard() {
+export default async function CoachPage() {
+  const supabase = await createClient();
+
+  // 1. Oturum Kontrolü
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) {
+    redirect('/login');
+  }
+
+  // 2. Rol Kontrolü (Veritabanındaki 'profiles' tablonuzdan)
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single();
+
+  // Eğer kullanıcı koç değilse öğrenci sayfasına postala
+  if (profile?.role !== 'coach') {
+    redirect('/student');
+  }
+
+  // 3. Her şey tamamsa sayfayı render et
   return (
     <div>
       <div className="mb-10">

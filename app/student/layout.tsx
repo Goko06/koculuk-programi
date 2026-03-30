@@ -2,14 +2,19 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Home, BookOpen, Target, BarChart3, User, LogOut, Menu } from 'lucide-react';
+import { usePathname } from 'next/navigation';
+import { 
+  Home, BookOpen, Target, BarChart3, User, LogOut, Menu 
+} from 'lucide-react';
+import Image from 'next/image';
 
-export default function StudentLayout({ 
-  children 
-}: { 
-  children: React.ReactNode 
+export default function StudentLayout({
+  children,
+}: {
+  children: React.ReactNode;
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const pathname = usePathname();
 
   const menuItems = [
     { name: 'Dashboard', href: '/student', icon: Home },
@@ -19,49 +24,60 @@ export default function StudentLayout({
     { name: 'Profil', href: '/student/profile', icon: User },
   ];
 
+  const isActive = (href: string) => pathname === href;
+
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
       {/* Sidebar */}
-      <div className={`bg-white border-r border-slate-200 w-72 flex-shrink-0 transition-all duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}>
-        <div className="p-6 border-b">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center">
-              <span className="text-white font-bold text-xl">K</span>
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900">Koçluk</h1>
-              <p className="text-xs text-slate-500">Eğitim Koçluğu</p>
-            </div>
+      <div className={`bg-white border-r border-slate-200 w-72 flex-shrink-0 transition-all duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 z-50`}>
+        
+        {/* Logo Bölümü */}
+        <div className="p-6 border-b border-slate-100">
+          <div className="flex items-center justify-center mb-2">
+            <Image 
+              src="/logo.png" 
+              alt="Göksel Atak Eğitim Kurumları" 
+              width={220} 
+              height={70}
+              priority
+              className="mx-auto"
+            />
           </div>
+          <p className="text-center text-xs text-slate-500 mt-1">Eğitim Koçluk Programı</p>
         </div>
 
         <nav className="p-4 space-y-1">
           {menuItems.map((item) => {
             const Icon = item.icon;
+            const active = isActive(item.href);
             return (
               <Link
                 key={item.name}
                 href={item.href}
-                className="flex items-center gap-3 px-4 py-3 text-slate-700 hover:bg-slate-100 rounded-xl transition-colors font-medium"
+                className={`flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all font-medium ${
+                  active 
+                    ? 'bg-blue-600 text-white shadow-sm' 
+                    : 'text-slate-700 hover:bg-slate-100'
+                }`}
               >
                 <Icon size={20} />
-                {item.name}
+                <span>{item.name}</span>
               </Link>
             );
           })}
         </nav>
 
         <div className="absolute bottom-8 left-6 right-6">
-          <button className="flex w-full items-center gap-3 px-4 py-3 text-red-600 hover:bg-red-50 rounded-xl transition-colors">
+          <button className="flex w-full items-center gap-3 px-4 py-3.5 text-red-600 hover:bg-red-50 rounded-xl transition-colors font-medium">
             <LogOut size={20} />
             Çıkış Yap
           </button>
         </div>
       </div>
 
-      {/* Ana İçerik Alanı */}
-      <div className="flex-1 flex flex-col">
-        <header className="bg-white border-b px-6 py-4 flex items-center justify-between">
+      {/* Ana İçerik */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between">
           <button 
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className="lg:hidden p-2 hover:bg-slate-100 rounded-lg"
@@ -71,16 +87,16 @@ export default function StudentLayout({
           
           <div className="flex items-center gap-4">
             <div className="text-right">
-              <p className="font-semibold">Ahmet Yılmaz</p>
+              <p className="font-semibold text-slate-900">Ahmet Yılmaz</p>
               <p className="text-sm text-slate-500">12. Sınıf • YKS Sayısal</p>
             </div>
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold">
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-2xl flex items-center justify-center text-white font-bold text-lg">
               AY
             </div>
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto p-8">
+        <main className="flex-1 overflow-auto p-6 lg:p-8">
           {children}
         </main>
       </div>

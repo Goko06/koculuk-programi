@@ -1,14 +1,14 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
-import { Save } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
 export default function ExamEntryPage() {
@@ -19,6 +19,7 @@ export default function ExamEntryPage() {
   const [source, setSource] = useState('');
   const [note, setNote] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const router = useRouter();
 
   // TYT
   const [turkceDogru, setTurkceDogru] = useState(0);
@@ -79,7 +80,7 @@ export default function ExamEntryPage() {
   const aytCografya2Net = calculateNet(cografya2Dogru, cografya2Yanlis);
   const aytFelsefe2Net = calculateNet(felsefe2Dogru, felsefe2Yanlis);
 
-  const handleSave = async () => {
+    const handleSave = async () => {
     if (!examName) {
       toast.error("Deneme adını giriniz.");
       return;
@@ -88,12 +89,17 @@ export default function ExamEntryPage() {
     setIsSaving(true);
 
     try {
-      const testStudentId = "00000000-0000-0000-0000-000000000000";
+      const { data: { user } } = await supabase.auth.getUser();
+
+      if (!user) {
+        toast.error("Oturumunuz sona ermiş. Lütfen tekrar giriş yapın.");
+        return;
+      }
 
       const { error } = await supabase
         .from('exams')
         .insert({
-          student_id: testStudentId,
+          student_id: user.id,                    // ← Gerçek kullanıcı ID'si
           exam_date: examDate,
           exam_name: examName,
           exam_type: examType,
@@ -127,12 +133,11 @@ export default function ExamEntryPage() {
 
       toast.success("Deneme sonucu başarıyla kaydedildi! 🎉");
 
-      // Form sıfırlama
+      // Form sıfırlama (tüm state'leri sıfırla)
       setExamName('');
       setTotalDuration(0);
       setSource('');
       setNote('');
-      // Tüm inputları sıfırla
       setTurkceDogru(0); setTurkceYanlis(0);
       setMatDogru(0); setMatYanlis(0);
       setSosyalDogru(0); setSosyalYanlis(0);

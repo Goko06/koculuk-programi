@@ -1,14 +1,15 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
-import { Save, Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
 interface SubjectEntry {
@@ -32,6 +33,7 @@ export default function DailyEntryPage() {
   const [isSaving, setIsSaving] = useState(false);
 
   const supabase = createClient();
+  const router = useRouter();
 
   const subjects = [
     'Türkçe', 'Matematik', 'Fizik', 'Kimya', 'Biyoloji',
@@ -71,7 +73,7 @@ export default function DailyEntryPage() {
     setEntries(entries.filter((_, i) => i !== index));
   };
 
-  const handleSave = async () => {
+    const handleSave = async () => {
     if (entries.some(e => !e.subject || e.questions === 0)) {
       toast.error("Lütfen her ders için ders adı ve çözülen soru sayısını girin.");
       return;
@@ -80,15 +82,20 @@ export default function DailyEntryPage() {
     setIsSaving(true);
 
     try {
-      const testStudentId = "00000000-0000-0000-0000-000000000000";
+      const { data: { user } } = await supabase.auth.getUser();
+
+      if (!user) {
+        toast.error("Oturumunuz sona ermiş. Lütfen tekrar giriş yapın.");
+        return;
+      }
 
       const { error } = await supabase
         .from('daily_entries')
         .insert({
-          student_id: testStudentId,
+          student_id: user.id,                    // ← Gerçek kullanıcı ID'si
           entry_date: new Date().toISOString().split('T')[0],
           total_duration_minutes: totalDuration,
-          mood,
+          mood: mood,
           general_note: generalNote,
           subjects_data: entries
         });
@@ -104,6 +111,7 @@ export default function DailyEntryPage() {
       setMood('😊');
 
     } catch (error: any) {
+      console.error(error);
       toast.error("Kayıt sırasında hata oluştu: " + (error.message || "Bilinmeyen hata"));
     } finally {
       setIsSaving(false);

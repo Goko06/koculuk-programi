@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { toast } from 'sonner';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
@@ -17,91 +17,100 @@ export default function LoginPage() {
   const router = useRouter();
   const supabase = createClient();
 
-    const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Sadece Öğrenci Girişi
+  const girisOgrenci = async () => {
     setIsLoading(true);
-
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const { error } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
       });
-
       if (error) throw error;
 
-      toast.success("Giriş başarılı! Hoş geldiniz.");
-      
-      // Başarılı giriş sonrası öğrenci paneline yönlendir
+      toast.success("Öğrenci girişi başarılı");
       router.push('/student');
-      router.refresh();
-
     } catch (error: any) {
-      toast.error(error.message === "Invalid login credentials" 
-        ? "E-posta veya şifre hatalı." 
-        : "Giriş başarısız oldu. Lütfen tekrar deneyin.");
+      toast.error("Giriş başarısız: " + error.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Sadece Koç Girişi
+  const girisKoc = async () => {
+    setIsLoading(true);
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+      if (error) throw error;
+
+      toast.success("Koç girişi başarılı");
+      router.push('/coach');
+    } catch (error: any) {
+      toast.error("Giriş başarısız: " + error.message);
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center pb-8">
-          <div className="mx-auto mb-6">
-            <Image 
-              src="/logo.png" 
-              alt="Göksel Atak Eğitim Kurumları" 
-              width={260} 
-              height={80}
-              priority
-              className="mx-auto"
-            />
-          </div>
-          <CardTitle className="text-2xl text-slate-900">Öğrenci Girişi</CardTitle>
-          <p className="text-slate-600 mt-2">Hoş geldiniz</p>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-4">
+      <Card className="w-full max-w-md shadow-2xl">
+        <CardHeader className="text-center pt-10 pb-8">
+          <Image 
+            src="/logo.png" 
+            alt="Göksel Atak Eğitim Kurumları" 
+            width={270} 
+            height={80}
+            priority
+            className="mx-auto mb-6"
+          />
+          <h1 className="text-2xl font-bold text-slate-900">Giriş Yap</h1>
+          <p className="text-slate-600">Lütfen türünüzü seçerek giriş yapın</p>
         </CardHeader>
 
-        <CardContent>
-          <form onSubmit={handleLogin} className="space-y-6">
-            <div>
-              <Label htmlFor="email">E-posta Adresi</Label>
-              <Input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="ornek@gokselatak.com"
-                required
-                className="h-12 mt-1.5"
-              />
-            </div>
+        <CardContent className="px-8 pb-10 space-y-8">
+          <div>
+            <Label>E-posta</Label>
+            <Input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="email@adresiniz.com"
+              className="h-12 mt-2"
+            />
+          </div>
 
-            <div>
-              <Label htmlFor="password">Şifre</Label>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Şifreniz"
-                required
-                className="h-12 mt-1.5"
-              />
-            </div>
+          <div>
+            <Label>Şifre</Label>
+            <Input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Şifreniz"
+              className="h-12 mt-2"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 pt-6">
+            <Button 
+              onClick={girisOgrenci}
+              disabled={isLoading}
+              className="h-14 text-lg bg-blue-600 hover:bg-blue-700"
+            >
+              Öğrenci Girişi
+            </Button>
 
             <Button 
-              type="submit" 
-              className="w-full h-12 text-lg font-medium" 
+              onClick={girisKoc}
               disabled={isLoading}
+              variant="outline"
+              className="h-14 text-lg border-2 border-slate-400"
             >
-              {isLoading ? "Giriş yapılıyor..." : "Giriş Yap"}
+              Koç Girişi
             </Button>
-          </form>
-
-          <div className="mt-6 text-center text-sm text-slate-500">
-            Hesabınız yok mu? <br />
-            Koçunuzla iletişime geçerek kayıt olabilirsiniz.
           </div>
         </CardContent>
       </Card>

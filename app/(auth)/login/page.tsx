@@ -1,117 +1,128 @@
-"use client";
+'use client';
 
-import React, { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { createClient } from '@/lib/supabase/client'; // client.ts yolun doğru olduğundan emin ol
+import { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { toast } from 'sonner';
+import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
-  
   const supabase = createClient();
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
+  const handleLogin = async (selectedType: 'student' | 'coach') => {
+    setIsLoading(true);
 
     try {
-      // 1. Supabase Auth ile Giriş
-      const { data, error: authError } = await supabase.auth.signInWithPassword({
-        email,
+      // 1. Giriş yap
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
         password,
       });
 
-      if (authError) throw authError;
+      if (error) throw error;
 
-      if (data.user) {
-        // 2. Profiles tablosundan Rolü çek
-        const { data: profile, error: profileError } = await supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', data.user.id)
-          .maybeSingle();
+      // 2. Kullanıcının rolünü profiles tablosundan al
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('user_id', data.user.id)
+        .single();
 
-        if (profileError) {
-          console.error("Profil çekme hatası:", profileError.message);
-          // Profil bulunamazsa varsayılana at
-          router.push('/dashboard');
-          return;
-        }
+      const userRole = profile?.role || 'student';
 
-        // 3. Rol Kontrolü ve Yönlendirme
-        const userRole = profile?.role?.toLowerCase();
-        console.log("Giriş Başarılı. Rol:", userRole);
-
-        if (userRole === 'coach') {
-          router.push('/coach');
-        } else if (userRole === 'student') {
-          router.push('/student');
-        } else {
-          console.warn("Tanımsız rol, dashboard'a yönlendiriliyor.");
-          router.push('/dashboard');
-        }
+      // 3. Kontrol: Seçilen buton ile gerçek rol uyumlu mu?
+      if (selectedType === 'student' && userRole === 'coach') {
+        toast.error("Bu hesap bir koç hesabıdır. Lütfen 'Koç Girişi' butonunu kullanın.");
+        await supabase.auth.signOut();
+        return;
       }
-    } catch (err: any) {
-      setError(err.message || 'Giriş yapılırken bir hata oluştu.');
+
+      if (selectedType === 'coach' && userRole === 'student') {
+        toast.error("Bu hesap bir öğrenci hesabıdır. Lütfen 'Öğrenci Girişi' butonunu kullanın.");
+        await supabase.auth.signOut();
+        return;
+      }
+
+      toast.success(`${selectedType === 'coach' ? 'Koç' : 'Öğrenci'} olarak giriş yapıldı.`);
+
+      // 4. Yönlendirme
+      if (userRole === 'coach') {
+        router.push('/coach');
+      } else {
+        router.push('/student');
+      }
+
+    } catch (error: any) {
+      toast.error("Giriş başarısız: " + error.message);
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4 text-slate-900">
-      <Card className="w-full max-w-md shadow-lg border-none">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">Giriş Yap</CardTitle>
-          <p className="text-sm text-slate-500 text-center">
-            Hesabınıza erişmek için bilgilerinizi girin
-          </p>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-4">
+      <Card className="w-full max-w-md shadow-2xl">
+        <CardHeader className="text-center pt-10 pb-8">
+          <Image 
+            src="/logo.png" 
+            alt="Göksel Atak Eğitim Kurumları" 
+            width={270} 
+            height={80}
+            priority
+            className="mx-auto mb-6"
+          />
+          <h1 className="text-2xl font-bold text-slate-900">Giriş Yap</h1>
         </CardHeader>
-        <CardContent>
-          <form onSubmit={handleLogin} className="space-y-4">
-            {error && (
-              <div className="bg-red-50 text-red-600 p-3 rounded-md text-sm border border-red-100">
-                {error}
-              </div>
-            )}
-            
-            <div className="space-y-2">
-              <label className="text-sm font-medium">E-posta</label>
-              <input
-                type="email"
-                required
-                className="w-full p-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-slate-900 outline-none transition-all"
-                placeholder="ornek@mail.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-            </div>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Şifre</label>
-              <input
-                type="password"
-                required
-                className="w-full p-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-slate-900 outline-none transition-all"
-                placeholder="••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </div>
+        <CardContent className="px-8 pb-10 space-y-8">
+          <div>
+            <Label>E-posta</Label>
+            <Input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="email@adresiniz.com"
+              className="h-12 mt-2"
+            />
+          </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-slate-900 text-white p-2 rounded-md hover:bg-slate-800 transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+          <div>
+            <Label>Şifre</Label>
+            <Input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Şifreniz"
+              className="h-12 mt-2"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 pt-6">
+            <Button 
+              onClick={() => handleLogin('student')}
+              disabled={isLoading}
+              className="h-14 text-lg bg-blue-600 hover:bg-blue-700"
             >
-              {loading ? 'Giriş Yapılıyor...' : 'Giriş Yap'}
-            </button>
-          </form>
+              Öğrenci Girişi
+            </Button>
+
+            <Button 
+              onClick={() => handleLogin('coach')}
+              disabled={isLoading}
+              variant="outline"
+              className="h-14 text-lg border-2"
+            >
+              Koç Girişi
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>

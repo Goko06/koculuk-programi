@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState } from 'react';
@@ -116,6 +117,11 @@ export default function DailyEntryPage() {
     } finally {
       setIsSaving(false);
     }
+    const validEntries = entries.filter(e => e.subject && e.questions > 0);
+if (validEntries.length === 0) {
+  toast.error("En az bir ders için soru sayısı girmelisin!");
+  return;
+}
   };
 
   return (

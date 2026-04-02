@@ -1,92 +1,167 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Plus, TrendingUp, BarChart3, Calendar, Loader2 } from 'lucide-react';
-import { format } from 'date-fns';
-import { tr } from 'date-fns/locale';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { ArrowLeft, Save, AlertCircle, Loader2, Sparkles, Calculator } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 
-export default function StudentExamAnalysis() {
-  const [exams, setExams] = useState<any[]>([]);
+// --- MEB UYUMLU LGS AYARLARI ---
+const LGS_CONFIG: any = {
+  tr: { label: 'Türkçe', max: 20, coeff: 4 },
+  mat: { label: 'Matematik', max: 20, coeff: 4 },
+  fen: { label: 'Fen Bilimleri', max: 20, coeff: 4 },
+  ink: { label: 'İnkılap Tarihi', max: 10, coeff: 1 },
+  din: { label: 'Din Kültürü', max: 10, coeff: 1 },
+  ing: { label: 'İngilizce', max: 10, coeff: 1 }
+};
+
+// --- YKS DERS AYARLARI (TYT & AYT AYRI) ---
+const TYT_DERSLER = [
+  { k: 'tr', l: 'Türkçe', m: 40 },
+  { k: 'mat', l: 'Temel Matematik', m: 40 },
+  { k: 'fen', l: 'Fen Bilimleri', m: 20 },
+  { k: 'sos', l: 'Sosyal Bilimler', m: 20 }
+];
+
+const AYT_DERSLER = [
+  { k: 'mat_ayt', l: 'AYT Matematik', m: 40 },
+  { k: 'edeb_ayt', l: 'Ed.-Sos-1', m: 40 },
+  { k: 'fen_ayt', l: 'Fen Bilimleri-2', m: 40 },
+  { k: 'sos2_ayt', l: 'Sosyal Bilimler-2', m: 40 }
+];
+
+export default function AddExamPage() {
   const [loading, setLoading] = useState(true);
-  const router = useRouter();
+  const [saving, setSaving] = useState(false);
+  const [student, setStudent] = useState<any>(null);
+  const [examType, setExamType] = useState<'LGS' | 'TYT' | 'AYT'>('TYT');
+  
+  const [formData, setFormData] = useState<any>({
+    exam_name: '',
+    tr_d: '', tr_y: '', mat_d: '', mat_y: '', fen_d: '', fen_y: '', sos_d: '', sos_y: '',
+    mat_ayt_d: '', mat_ayt_y: '', edeb_ayt_d: '', edeb_ayt_y: '', fen_ayt_d: '', fen_ayt_y: '', sos2_ayt_d: '', sos2_ayt_y: '',
+    ink_d: '', ink_y: '', din_d: '', din_y: '', ing_d: '', ing_y: '',
+  });
+
   const supabase = createClient();
+  const router = useRouter();
 
   useEffect(() => {
-    const fetchExams = async () => {
-      try {
-        setLoading(true);
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
-        const { data } = await supabase.from('exams').select('*').eq('student_id', user.id).order('exam_date', { ascending: true });
-        setExams(data || []);
-      } catch (error) { console.error(error); } finally { setLoading(false); }
+    const getStudent = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data } = await supabase.from('students').select('*').eq('id', user.id).single();
+        setStudent(data);
+        if (["5", "6", "7", "8"].includes(data?.grade_level)) setExamType('LGS');
+      }
+      setLoading(false);
     };
-    fetchExams();
+    getStudent();
   }, [supabase]);
 
-  const stats = {
-    total: exams.length,
-    lastNet: exams.length > 0 ? exams[exams.length - 1].total_net : 0,
-    avgNet: exams.length > 0 ? (exams.reduce((acc, curr) => acc + curr.total_net, 0) / exams.length).toFixed(1) : 0,
-    bestNet: exams.length > 0 ? Math.max(...exams.map(e => e.total_net)) : 0
+  const calculation = useMemo(() => {
+    const calcNet = (d: any, y: any, divisor: number) => {
+      const dogru = Math.max(0, parseInt(d) || 0);
+      const yanlis = Math.max(0, parseInt(y) || 0);
+      return Math.max(0, dogru - (yanlis / divisor));
+    };
+
+    if (examType === 'LGS') {
+      let weightedNetSum = 0;
+      let hasError = false;
+      Object.keys(LGS_CONFIG).forEach(key => {
+        const d = parseInt(formData[`${key}_d`]) || 0;
+        const y = parseInt(formData[`${key}_y`]) || 0;
+        if (d + y > LGS_CONFIG[key].max) hasError = true;
+        weightedNetSum += calcNet(d, y, 3) * LGS_CONFIG[key].coeff;
+      });
+      let score = 194.7 + (weightedNetSum * 1.13);
+      return { value: Number(score.toFixed(2)), error: hasError };
+    } else if (examType === 'TYT') {
+      const tytNet = calcNet(formData.tr_d, formData.tr_y, 4) + calcNet(formData.mat_d, formData.mat_y, 4) + 
+                     calcNet(formData.fen_d, formData.fen_y, 4) + calcNet(formData.sos_d, formData.sos_y, 4);
+      return { value: Number(tytNet.toFixed(2)), error: false };
+    } else {
+      const aytNet = calcNet(formData.mat_ayt_d, formData.mat_ayt_y, 4) + calcNet(formData.edeb_ayt_d, formData.edeb_ayt_y, 4) + 
+                     calcNet(formData.fen_ayt_d, formData.fen_ayt_y, 4) + calcNet(formData.sos2_ayt_d, formData.sos2_ayt_y, 4);
+      return { value: Number(aytNet.toFixed(2)), error: false };
+    }
+  }, [formData, examType]);
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (calculation.error) return toast.error("Soru sayısını kontrol edin!");
+    setSaving(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const { error } = await supabase.from('exams').insert([{
+        student_id: user?.id,
+        exam_name: formData.exam_name,
+        exam_type: examType,
+        total_net: calculation.value,
+        exam_date: new Date().toISOString()
+      }]);
+      if (error) throw error;
+      toast.success(`${examType} denemesi kaydedildi!`);
+      router.push('/student/exam');
+    } catch (error: any) { toast.error(error.message); } finally { setSaving(false); }
   };
 
-  if (loading) return <div className="flex h-screen items-center justify-center bg-slate-50 font-black text-blue-600 animate-pulse uppercase tracking-widest">VERİLER ANALİZ EDİLİYOR...</div>;
+  const isLGSStudent = ["5", "6", "7", "8"].includes(student?.grade_level);
+  const currentDersler = examType === 'LGS' ? Object.keys(LGS_CONFIG).map(k => ({k, l: LGS_CONFIG[k].label, m: LGS_CONFIG[k].max})) : examType === 'TYT' ? TYT_DERSLER : AYT_DERSLER;
+
+  if (loading) return <div className="h-screen flex items-center justify-center font-black text-blue-600 animate-pulse text-xs">Yükleniyor...</div>;
 
   return (
-    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-8 bg-slate-50 min-h-screen text-slate-900 font-sans">
-      <div className="flex flex-col md:flex-row justify-between items-center gap-6 bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100">
-        <div className="flex items-center gap-4">
-          <div className="p-4 bg-orange-600 rounded-[1.5rem] text-white shadow-xl shadow-orange-100"><BarChart3 size={28} /></div>
-          <div><h1 className="text-2xl font-black tracking-tight">Deneme Analiz Merkezi</h1><p className="text-slate-400 font-bold text-xs uppercase tracking-widest mt-1 italic">Gelişimini ve Net Artışını Takip Et</p></div>
+    <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-8 bg-slate-50 min-h-screen text-slate-900 pb-32 text-left">
+      <div className="flex flex-col md:flex-row justify-between items-center bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100 gap-6">
+        <div className="flex items-center gap-6">
+          <Button onClick={() => router.back()} variant="ghost" className="rounded-full w-14 h-14 p-0 bg-slate-50 hover:bg-slate-900 hover:text-white transition-all"><ArrowLeft size={24} /></Button>
+          <div>
+            <h1 className="text-3xl font-black italic tracking-tighter uppercase">{examType} Ekle</h1>
+            <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest mt-1 italic">Branş Ayrıştırılmış Giriş</p>
+          </div>
         </div>
-        <Button onClick={() => router.push('/student/exam/add')} className="w-full md:w-auto bg-orange-600 hover:bg-orange-700 text-white rounded-2xl px-8 h-14 font-black shadow-xl shadow-orange-100 flex items-center gap-3"><Plus size={22} /> Yeni Deneme Ekle</Button>
+        {!isLGSStudent && (
+          <div className="flex bg-slate-100 p-1.5 rounded-2xl">
+            {['TYT', 'AYT'].map((t) => (
+              <button key={t} onClick={() => setExamType(t as any)} className={`px-8 py-2.5 rounded-xl text-[10px] font-black uppercase transition-all ${examType === t ? 'bg-white shadow-md text-blue-600' : 'text-slate-400'}`}>{t}</button>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card className="rounded-[2rem] border-none shadow-sm bg-white p-6"><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 italic">Son Netin</p><h3 className="text-3xl font-black text-orange-600">{stats.lastNet}</h3></Card>
-        <Card className="rounded-[2rem] border-none shadow-sm bg-white p-6"><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 italic">Ortalama Net</p><h3 className="text-3xl font-black text-blue-600">{stats.avgNet}</h3></Card>
-        <Card className="rounded-[2rem] border-none shadow-sm bg-white p-6"><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 italic">En Yüksek Net</p><h3 className="text-3xl font-black text-emerald-600">{stats.bestNet}</h3></Card>
-        <Card className="rounded-[2rem] border-none shadow-sm bg-slate-900 p-6"><p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 italic">Toplam Deneme</p><h3 className="text-3xl font-black text-white">{stats.total}</h3></Card>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2">
-          <Card className="rounded-[3rem] border-none shadow-sm bg-white p-8">
-            <h3 className="text-xl font-black flex items-center gap-3 italic mb-8"><TrendingUp className="text-orange-600" /> Net Gelişim Grafiği</h3>
-            <div className="h-[350px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={exams}>
-                  <defs><linearGradient id="colorNet" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f97316" stopOpacity={0.3}/><stop offset="95%" stopColor="#f97316" stopOpacity={0}/></linearGradient></defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis dataKey="exam_date" tickFormatter={(str) => format(new Date(str), 'd MMM', { locale: tr })} axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontWeight: 700, fontSize: 11}} />
-                  <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontWeight: 700, fontSize: 11}} />
-                  <Tooltip contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
-                  <Area type="monotone" dataKey="total_net" stroke="#f97316" strokeWidth={4} fillOpacity={1} fill="url(#colorNet)" />
-                </AreaChart>
-              </ResponsiveContainer>
+      <form onSubmit={handleSave} className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+        <div className="lg:col-span-8 space-y-6">
+          <Card className="rounded-[3rem] border-none shadow-sm bg-white p-8 space-y-8">
+            <Input required placeholder="Deneme Adı" value={formData.exam_name} onChange={e => setFormData({...formData, exam_name: e.target.value})} className="rounded-2xl border-slate-100 h-14 font-bold" />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {currentDersler.map((ders: any) => (
+                <div key={ders.k} className="p-6 rounded-[2rem] border-2 flex flex-col gap-4 bg-slate-50 border-transparent">
+                  <span className="font-black text-[10px] uppercase text-slate-400">{ders.l} (Max: {ders.m})</span>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Input type="number" placeholder="D" value={formData[`${ders.k}_d`]} onChange={e => setFormData({...formData, [`${ders.k}_d`]: e.target.value})} className="rounded-xl h-12 text-center font-bold" />
+                    <Input type="number" placeholder="Y" value={formData[`${ders.k}_y`]} onChange={e => setFormData({...formData, [`${ders.k}_y`]: e.target.value})} className="rounded-xl h-12 text-center font-bold text-red-500" />
+                  </div>
+                </div>
+              ))}
             </div>
           </Card>
         </div>
-        <div className="space-y-6">
-          <h2 className="text-xl font-black flex items-center gap-2 px-4 italic tracking-tight uppercase"><Calendar className="text-orange-600" /> Geçmiş</h2>
-          <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-            {[...exams].reverse().map((exam) => (
-              <Card key={exam.id} className="rounded-[2rem] border-none shadow-sm bg-white p-5 hover:shadow-md transition-all group">
-                <div className="flex justify-between items-center">
-                  <div><h4 className="font-black text-slate-900 group-hover:text-orange-600 transition-colors uppercase italic">{exam.exam_name}</h4><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest italic mt-1">{format(new Date(exam.exam_date), 'dd MMMM yyyy', { locale: tr })}</p></div>
-                  <div className="text-right"><span className="text-2xl font-black text-slate-900 leading-none">{exam.total_net}</span><p className="text-[10px] font-black text-slate-300 uppercase tracking-tighter">NET</p></div>
-                </div>
-              </Card>
-            ))}
-          </div>
+        <div className="lg:col-span-4">
+          <Card className="rounded-[3.5rem] border-none shadow-2xl bg-slate-900 p-10 text-white sticky top-8 text-center">
+             <Sparkles className="mx-auto text-blue-400 mb-8" size={48} />
+             <p className="text-[10px] font-black uppercase text-blue-400 mb-2">{examType === 'LGS' ? 'Puan' : 'Toplam Net'}</p>
+             <h2 className="text-6xl font-black italic tracking-tighter">{calculation.value}</h2>
+             <div className="pt-10 border-t border-white/10 mt-10"><Button disabled={saving} className="w-full h-16 rounded-2xl bg-blue-600 text-white font-black uppercase">Kaydet</Button></div>
+          </Card>
         </div>
-      </div>
+      </form>
     </div>
   );
 }

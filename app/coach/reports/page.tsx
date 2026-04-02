@@ -1,221 +1,158 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { createClient } from '@/lib/supabase/client';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useState, useEffect, useCallback } from 'react';
+import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
-  ResponsiveContainer, LineChart, Line, AreaChart, Area, Cell, Legend
-} from 'recharts';
-import { 
-  TrendingUp, Users, BookOpen, Award, Loader2, 
-  PieChart, Target, Zap, ChevronUp, AlertCircle 
+  Brain, Sparkles, ArrowLeft, Users, 
+  Search, MessageSquare, Loader2, TrendingUp, TrendingDown 
 } from 'lucide-react';
-import { format, subDays } from 'date-fns';
-import { tr } from 'date-fns/locale';
+import { createClient } from '@/lib/supabase/client';
+import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 
-export default function CoachReports() {
+interface Student {
+  id: string;
+  full_name: string;
+  grade_level?: string;
+  major?: string;
+  phone?: string;
+  weekly_progress?: number[]; 
+}
+
+export default function CoachReportsPage() {
+  const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
-  const [reportData, setReportData] = useState<any>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  
   const supabase = createClient();
+  const router = useRouter();
 
-  useEffect(() => {
-    const fetchAnalytics = async () => {
-      try {
-        setLoading(true);
-        
-        // 1. Verileri Çek (Denemeler ve Günlük Raporlar)
-        const { data: exams } = await supabase.from('exams').select('*').order('exam_date', { ascending: true });
-        const { data: entries } = await supabase.from('daily_entries').select('*');
-        const { data: students } = await supabase.from('students').select('id');
+  const fetchStudentsWithAnalysis = useCallback(async () => {
+    try {
+      setLoading(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      
+      // ÖNEMLİ: Tablo isimlerini 'daily_reports' veya 'reports' olarak deniyoruz
+      // Eğer hata alıyorsan Supabase'deki rapor tablonun ismini kontrol etmelisin.
+      const { data, error } = await supabase
+        .from('students')
+        .select(`
+          id, full_name, grade_level, major, phone
+        `) 
+        .eq('coach_id', user.id)
+        .order('full_name', { ascending: true });
 
-        // 2. Soru Çözüm Trendi Hazırla (Son 7 Gün)
-        const last7Days = [...Array(7)].map((_, i) => {
-          const date = format(subDays(new Date(), i), 'yyyy-MM-dd');
-          const dayEntries = entries?.filter(e => e.entry_date === date) || [];
-          const totalSolved = dayEntries.reduce((acc, curr) => {
-            return acc + (curr.subjects_data?.reduce((sAcc: any, sCurr: any) => sAcc + (Number(sCurr.solved_questions) || 0), 0) || 0);
-          }, 0);
-          return {
-            name: format(subDays(new Date(), i), 'EEE', { locale: tr }),
-            soru: totalSolved
-          };
-        }).reverse();
+      if (error) throw error;
 
-        // 3. Ders Bazlı Başarı Dağılımı (Örnek)
-        const subjectStats = [
-          { subject: 'Matematik', net: 28, full: 40 },
-          { subject: 'Türkçe', net: 34, full: 40 },
-          { subject: 'Fen Bilimleri', net: 16, full: 20 },
-          { subject: 'Sosyal', net: 18, full: 20 },
-        ];
+      // Grafikleri şimdilik boş dizi olarak başlatıyoruz (Hata almamak için)
+      const formattedData = data?.map((student: any) => ({
+        ...student,
+        weekly_progress: [0, 0, 0, 0, 0, 0, 0] // Gerçek veri çekme mantığı eklenecek
+      }));
 
-        setReportData({
-          dailyTrend: last7Days,
-          subjectStats,
-          totalStudents: students?.length || 0,
-          avgNet: exams && exams.length > 0 ? (exams.reduce((acc, curr) => acc + curr.total_net, 0) / exams.length).toFixed(1) : 0,
-          totalSolvedAllTime: entries?.reduce((acc, curr) => acc + (curr.total_duration_minutes || 0), 0) || 0
-        });
-
-      } catch (error) {
-        console.error("Analiz Hatası:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchAnalytics();
+      setStudents(formattedData || []);
+    } catch (error: any) {
+      console.error("Veri hatası:", error);
+      toast.error("Öğrenci listesi alınamadı.");
+    } finally {
+      setLoading(false);
+    }
   }, [supabase]);
 
-  if (loading) return (
-    <div className="flex h-screen items-center justify-center bg-slate-50">
-      <div className="text-center space-y-4">
-        <Loader2 className="animate-spin text-blue-600 h-12 w-12 mx-auto" />
-        <p className="font-black text-slate-400 italic animate-pulse tracking-widest">VERİLER ANALİZ EDİLİYOR...</p>
+  useEffect(() => { fetchStudentsWithAnalysis(); }, [fetchStudentsWithAnalysis]);
+
+  // Mini Grafik Çizici
+  const MiniSparkline = ({ data }: { data: number[] }) => {
+    const isUp = data[data.length - 1] >= data[data.length - 2];
+    return (
+      <div className="flex items-center gap-3 bg-slate-50 p-4 rounded-3xl border border-slate-100">
+        <div className="h-10 w-full bg-slate-200/50 rounded-xl animate-pulse flex items-center justify-center text-[10px] font-bold text-slate-400">
+           VERİ ANALİZ EDİLİYOR...
+        </div>
+        <div className={isUp ? 'text-emerald-500' : 'text-rose-500'}>
+           {isUp ? <TrendingUp size={20} /> : <TrendingDown size={20} />}
+        </div>
       </div>
+    );
+  };
+
+  if (loading) return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+      <Loader2 className="animate-spin text-blue-600" size={40} />
     </div>
   );
 
   return (
-    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-8 bg-slate-50 min-h-screen text-slate-900">
-      
-      {/* ÜST ÖZET KARTLARI */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card className="rounded-[2.5rem] border-none shadow-sm bg-white p-6 group hover:bg-blue-600 transition-all duration-500">
-          <div className="flex justify-between items-start mb-4">
-            <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl group-hover:bg-white/20 group-hover:text-white transition-colors">
-              <Users size={24} />
-            </div>
-            <span className="text-[10px] font-black text-slate-300 group-hover:text-white/50 uppercase tracking-widest">Toplam Öğrenci</span>
-          </div>
-          <h3 className="text-3xl font-black text-slate-900 group-hover:text-white transition-colors">{reportData.totalStudents}</h3>
-        </Card>
-
-        <Card className="rounded-[2.5rem] border-none shadow-sm bg-white p-6 group hover:bg-emerald-600 transition-all duration-500">
-          <div className="flex justify-between items-start mb-4">
-            <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl group-hover:bg-white/20 group-hover:text-white transition-colors">
-              <TrendingUp size={24} />
-            </div>
-            <span className="text-[10px] font-black text-slate-300 group-hover:text-white/50 uppercase tracking-widest">Genel Net Ort.</span>
-          </div>
-          <h3 className="text-3xl font-black text-slate-900 group-hover:text-white transition-colors">{reportData.avgNet}</h3>
-        </Card>
-
-        <Card className="rounded-[2.5rem] border-none shadow-sm bg-white p-6 group hover:bg-orange-600 transition-all duration-500">
-          <div className="flex justify-between items-start mb-4">
-            <div className="p-3 bg-orange-50 text-orange-600 rounded-2xl group-hover:bg-white/20 group-hover:text-white transition-colors">
-              <Zap size={24} />
-            </div>
-            <span className="text-[10px] font-black text-slate-300 group-hover:text-white/50 uppercase tracking-widest">Toplam Odak (Dk)</span>
-          </div>
-          <h3 className="text-3xl font-black text-slate-900 group-hover:text-white transition-colors">{reportData.totalSolvedAllTime}</h3>
-        </Card>
-
-        <Card className="rounded-[2.5rem] border-none shadow-sm bg-slate-900 p-6 relative overflow-hidden group">
-          <div className="relative z-10">
-            <div className="flex justify-between items-start mb-4">
-              <div className="p-3 bg-white/10 text-blue-400 rounded-2xl">
-                <Target size={24} />
-              </div>
-              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Grup Verimi</span>
-            </div>
-            <h3 className="text-3xl font-black text-white">%84</h3>
-          </div>
-          <div className="absolute -right-8 -bottom-8 w-24 h-24 bg-blue-600/20 blur-3xl rounded-full" />
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+    <div className="min-h-screen bg-slate-50 text-slate-900 p-4 md:p-8 font-sans">
+      <div className="max-w-7xl mx-auto space-y-8">
         
-        {/* GRAFİK 1: GÜNLÜK SORU TRENDİ */}
-        <Card className="rounded-[3rem] border-none shadow-sm bg-white p-8 group">
-          <CardHeader className="px-0 pt-0 mb-8 flex flex-row items-center justify-between">
-            <CardTitle className="text-xl font-black flex items-center gap-3 tracking-tight">
-              <BookOpen className="text-blue-600" /> Grup Soru Akışı
-            </CardTitle>
-            <div className="flex items-center gap-1 text-emerald-500 font-bold text-xs bg-emerald-50 px-3 py-1 rounded-full">
-              <ChevronUp size={14} /> %12 Artış
+        <div className="flex flex-col md:flex-row justify-between items-center gap-6 bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100">
+          <div className="flex items-center gap-4">
+            <div className="p-4 bg-slate-900 rounded-3xl text-white shadow-xl"><Users size={24} /></div>
+            <div>
+              <h1 className="text-2xl font-black italic tracking-tighter uppercase">Performans Raporları</h1>
+              <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Öğrenci Gelişim Takibi</p>
             </div>
-          </CardHeader>
-          <div className="h-[350px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={reportData.dailyTrend}>
-                <defs>
-                  <linearGradient id="colorSoru" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#2563eb" stopOpacity={0.4}/>
-                    <stop offset="95%" stopColor="#2563eb" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontWeight: 700, fontSize: 12}} />
-                <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontWeight: 700, fontSize: 12}} />
-                <Tooltip 
-                  contentStyle={{ borderRadius: '1.5rem', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)', padding: '1rem' }}
-                  itemStyle={{ fontWeight: '900', color: '#2563eb' }}
-                />
-                <Area type="monotone" dataKey="soru" stroke="#2563eb" strokeWidth={4} fillOpacity={1} fill="url(#colorSoru)" />
-              </AreaChart>
-            </ResponsiveContainer>
           </div>
-        </Card>
-
-        {/* GRAFİK 2: BRANŞ BAZLI NETLER */}
-        <Card className="rounded-[3rem] border-none shadow-sm bg-white p-8 group">
-          <CardHeader className="px-0 pt-0 mb-8">
-            <CardTitle className="text-xl font-black flex items-center gap-3 tracking-tight">
-              <PieChart className="text-purple-600" /> Branş Başarı Dağılımı
-            </CardTitle>
-          </CardHeader>
-          <div className="h-[350px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={reportData.subjectStats} layout="vertical" barSize={32}>
-                <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f1f5f9" />
-                <XAxis type="number" hide />
-                <YAxis 
-                  dataKey="subject" 
-                  type="category" 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{fill: '#475569', fontWeight: 900, fontSize: 11}}
-                  width={100}
-                />
-                <Tooltip 
-                   cursor={{fill: '#f8fafc'}}
-                   contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                />
-                <Bar dataKey="net" radius={[0, 10, 10, 0]}>
-                  {reportData.subjectStats.map((entry: any, index: number) => (
-                    <Cell key={`cell-${index}`} fill={index % 2 === 0 ? '#2563eb' : '#8b5cf6'} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <input 
+              type="text" 
+              placeholder="Öğrenci ara..."
+              className="bg-slate-100/50 border-none rounded-2xl py-3 px-6 text-sm font-bold w-full md:w-72"
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+            <Button onClick={() => router.back()} variant="ghost" className="rounded-2xl bg-slate-100 h-12 px-6 font-black"><ArrowLeft size={16} /></Button>
           </div>
-        </Card>
-
-      </div>
-
-      {/* KRİTİK UYARILAR PANELİ */}
-      <Card className="rounded-[3rem] border-none shadow-sm bg-white p-10">
-        <h3 className="text-xl font-black mb-6 flex items-center gap-3">
-          <AlertCircle className="text-amber-500" /> Koç Dikkat Listesi
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-           <div className="p-6 bg-red-50 rounded-[2rem] border border-red-100">
-              <p className="text-[10px] font-black text-red-600 uppercase tracking-widest mb-2">Düşüşte Olanlar</p>
-              <p className="font-bold text-slate-700 italic text-sm">Bu hafta deneme girmeyen 3 öğrenci tespit edildi.</p>
-           </div>
-           <div className="p-6 bg-blue-50 rounded-[2rem] border border-blue-100">
-              <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-2">Haftalık Yıldızlar</p>
-              <p className="font-bold text-slate-700 italic text-sm">Grup soru çözüm ortalaması geçen haftaya göre %15 arttı.</p>
-           </div>
-           <div className="p-6 bg-emerald-50 rounded-[2rem] border border-emerald-100">
-              <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-2">En Verimli Gün</p>
-              <p className="font-bold text-slate-700 italic text-sm">Salı günleri öğrenciler en yüksek odaklanma süresine ulaşıyor.</p>
-           </div>
         </div>
-      </Card>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          {students
+            .filter(s => s.full_name?.toLowerCase().includes(searchTerm.toLowerCase()))
+            .map((student) => (
+              <Card key={student.id} className="rounded-[3rem] border-none bg-white p-8 shadow-sm hover:shadow-2xl transition-all duration-500">
+                <div className="flex items-center gap-4 mb-6">
+                  <div className="w-14 h-14 rounded-2xl bg-slate-100 text-slate-900 flex items-center justify-center font-black text-xl">
+                    {student.full_name?.substring(0, 2).toUpperCase()}
+                  </div>
+                  <div>
+                    <h3 className="font-black text-lg text-slate-900">{student.full_name}</h3>
+                    <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">{student.grade_level}. Sınıf • {student.major}</p>
+                  </div>
+                </div>
+
+                <div className="mb-6 space-y-2">
+                   <p className="text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] ml-2 text-center italic font-bold">Haftalık Soru Trendi</p>
+                   <MiniSparkline data={student.weekly_progress || [0]} />
+                </div>
+
+                <div className="flex gap-3">
+                  <Button 
+                    onClick={() => {
+                      if (student.phone) {
+                        const cleanPhone = student.phone.replace(/\D/g, '');
+                        window.open(`https://wa.me{cleanPhone.startsWith('90') ? cleanPhone.slice(2) : cleanPhone}`, '_blank');
+                      } else {
+                        toast.error("Numara kayıtlı değil!");
+                      }
+                    }}
+                    className="flex-1 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-black text-xs h-14 uppercase"
+                  >
+                    <MessageSquare size={18} className="mr-2" /> WhatsApp
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    className="rounded-2xl bg-slate-50 hover:bg-slate-100 h-14 px-6 font-black text-xs uppercase"
+                    onClick={() => router.push(`/coach/student/${student.id}`)}
+                  >
+                    Detay
+                  </Button>
+                </div>
+              </Card>
+            ))}
+        </div>
+      </div>
     </div>
   );
 }

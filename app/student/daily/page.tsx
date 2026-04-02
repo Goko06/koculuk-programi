@@ -1,310 +1,254 @@
-
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, Suspense } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
+import { 
+  BookOpen, Clock, Send, Plus, Trash2, 
+  Smile, Meh, Frown, Save, Loader2, 
+  ArrowLeft, Sparkles, MessageSquare 
+} from 'lucide-react';
 import { toast } from 'sonner';
-import { Plus, Trash2 } from 'lucide-react';
-import { createClient } from '@/lib/supabase/client';
 
-interface SubjectEntry {
-  subject: string;
-  source: string;
-  questions: number;
-  correct: number;
-  wrong: number;
-  blank: number;
-  duration: number;
-  note: string;
-}
-
-export default function DailyEntryPage() {
-  const [entries, setEntries] = useState<SubjectEntry[]>([
-    { subject: '', source: '', questions: 0, correct: 0, wrong: 0, blank: 0, duration: 0, note: '' }
-  ]);
-  const [totalDuration, setTotalDuration] = useState(0);
-  const [mood, setMood] = useState('😊');
-  const [generalNote, setGeneralNote] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
-
-  const supabase = createClient();
+// URL Parametrelerini okumak için yardımcı bileşen
+function DailyReportContent() {
+  const searchParams = useSearchParams();
   const router = useRouter();
+  const supabase = createClient();
+  const pomodoroValue = searchParams.get('pomodoro');
 
-  const subjects = [
-    'Türkçe', 'Matematik', 'Fizik', 'Kimya', 'Biyoloji',
-    'Tarih', 'Coğrafya', 'Felsefe', 'Din Kültürü', 'İngilizce',
-    'T.C. İnkılap Tarihi', 'Yabancı Dil'
-  ];
-
-  const sources = [
-    'Palme Soru Bankası', 'Data Yayınları', 'Karekök Yayınları', 'Bilfen Yayınları',
-    'Esen Yayınları', 'Tonguç Akademi', 'Final Yayınları', 'Kafa Dengi', 
-    'ÖSYM Tarzı Deneme', 'Limit Yayınları', '3D Yayınları', '345 Yayınları',
-    'Kendi Ders Notlarım', 'YouTube + Soru Çözümü', 'Hoca Notu', 'Diğer'
-  ];
-
-  // Otomatik toplam soru hesaplama
-  const updateEntry = (index: number, field: keyof SubjectEntry, value: any) => {
-    const newEntries = [...entries];
-    newEntries[index] = { ...newEntries[index], [field]: value };
-    
-    // Otomatik toplam soru hesaplama
-    if (['correct', 'wrong', 'blank'].includes(field)) {
-      const correct = field === 'correct' ? Number(value) : newEntries[index].correct;
-      const wrong = field === 'wrong' ? Number(value) : newEntries[index].wrong;
-      const blank = field === 'blank' ? Number(value) : newEntries[index].blank;
-      newEntries[index].questions = correct + wrong + blank;
-    }
-    
-    setEntries(newEntries);
-  };
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [mood, setMood] = useState('😐');
+  const [totalDuration, setTotalDuration] = useState(pomodoroValue || '');
+  const [generalNote, setGeneralNote] = useState('');
+  
+  // Ders bazlı çalışma verileri
+  const [subjects, setSubjects] = useState<any[]>([
+    { subject: '', solved: '', correct: '', wrong: '', duration: '', source: '' }
+  ]);
 
   const addSubject = () => {
-    setEntries([...entries, { subject: '', source: '', questions: 0, correct: 0, wrong: 0, blank: 0, duration: 0, note: '' }]);
+    setSubjects([...subjects, { subject: '', solved: '', correct: '', wrong: '', duration: '', source: '' }]);
   };
 
   const removeSubject = (index: number) => {
-    if (entries.length === 1) return;
-    setEntries(entries.filter((_, i) => i !== index));
+    setSubjects(subjects.filter((_, i) => i !== index));
   };
 
-    const handleSave = async () => {
-    if (entries.some(e => !e.subject || e.questions === 0)) {
-      toast.error("Lütfen her ders için ders adı ve çözülen soru sayısını girin.");
-      return;
-    }
+  const updateSubject = (index: number, field: string, value: string) => {
+    const newSubjects = [...subjects];
+    newSubjects[index][field] = value;
+    setSubjects(newSubjects);
+  };
 
-    setIsSaving(true);
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
 
     try {
       const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Oturum bulunamadı.");
 
-      if (!user) {
-        toast.error("Oturumunuz sona ermiş. Lütfen tekrar giriş yapın.");
-        return;
+      // 1. Önce öğrencinin koçunu bul (Bildirim için)
+      const { data: studentData } = await supabase
+        .from('students')
+        .select('coach_id, full_name')
+        .eq('id', user.id)
+        .single();
+
+      // 2. Günlük Raporu Kaydet
+      const { error: entryError } = await supabase.from('daily_entries').insert({
+        student_id: user.id,
+        entry_date: new Date().toISOString().split('T')[0],
+        mood,
+        total_duration_minutes: parseInt(totalDuration),
+        general_note: generalNote,
+        subjects_data: subjects
+      });
+
+      if (entryError) throw entryError;
+
+      // 3. Koça Bildirim Gönder
+      if (studentData?.coach_id) {
+        await supabase.from('notifications').insert({
+          user_id: studentData.coach_id,
+          title: "Yeni Günlük Rapor! 📝",
+          message: `${studentData.full_name} bugünkü çalışma raporunu gönderdi.`,
+          type: 'info'
+        });
       }
 
-      const { error } = await supabase
-        .from('daily_entries')
-        .insert({
-          student_id: user.id,                    // ← Gerçek kullanıcı ID'si
-          entry_date: new Date().toISOString().split('T')[0],
-          total_duration_minutes: totalDuration,
-          mood: mood,
-          general_note: generalNote,
-          subjects_data: entries
-        });
-
-      if (error) throw error;
-
-      toast.success("Günlük çalışma başarıyla kaydedildi! 🎉");
-
-      // Formu sıfırla
-      setEntries([{ subject: '', source: '', questions: 0, correct: 0, wrong: 0, blank: 0, duration: 0, note: '' }]);
-      setTotalDuration(0);
-      setGeneralNote('');
-      setMood('😊');
-
+      toast.success("Raporun başarıyla gönderildi! Yarın daha iyisini yapabilirsin. 🚀");
+      router.push('/student');
     } catch (error: any) {
-      console.error(error);
-      toast.error("Kayıt sırasında hata oluştu: " + (error.message || "Bilinmeyen hata"));
+      toast.error("Hata: " + error.message);
     } finally {
-      setIsSaving(false);
+      setSubmitting(false);
     }
-    const validEntries = entries.filter(e => e.subject && e.questions > 0);
-if (validEntries.length === 0) {
-  toast.error("En az bir ders için soru sayısı girmelisin!");
-  return;
-}
   };
 
   return (
-    <div className="max-w-5xl mx-auto pb-12">
-      <div className="mb-10">
-        <h1 className="text-3xl font-bold text-slate-900 mb-2">Günlük Çalışma Girişi</h1>
-        <p className="text-slate-600">Bugün yaptığın çalışmaları kaydedelim.</p>
+    <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-10 bg-slate-50 min-h-screen text-slate-900 font-sans">
+      
+      {/* HEADER */}
+      <div className="flex flex-col md:flex-row justify-between items-center bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 gap-6">
+        <div className="flex items-center gap-4">
+          <Button onClick={() => router.back()} variant="ghost" className="rounded-full w-12 h-12 p-0 bg-slate-50">
+            <ArrowLeft size={20} />
+          </Button>
+          <div>
+            <h1 className="text-3xl font-black tracking-tight">Günlük Rapor</h1>
+            <p className="text-slate-400 font-bold text-xs uppercase tracking-widest italic">Bugünkü emeklerini kaydet.</p>
+          </div>
+        </div>
+        
+        {/* Mood Seçici */}
+        <div className="flex bg-slate-100 p-2 rounded-3xl gap-2">
+           {[
+             { icon: Frown, val: '😞' },
+             { icon: Meh, val: '😐' },
+             { icon: Smile, val: '😊' }
+           ].map((m) => (
+             <button
+              key={m.val}
+              onClick={() => setMood(m.val)}
+              className={`p-3 rounded-2xl transition-all ${mood === m.val ? 'bg-white shadow-md scale-110' : 'text-slate-400 hover:text-slate-600'}`}
+             >
+               <m.icon size={24} />
+             </button>
+           ))}
+        </div>
       </div>
 
-      {/* Genel Bilgiler */}
-      <Card className="mb-10">
-        <CardHeader>
-          <CardTitle>Genel Bilgiler</CardTitle>
-        </CardHeader>
-        <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-6">
-          <div>
-            <Label className="text-sm font-medium">Duygu Durumu</Label>
-            <Select value={mood} onValueChange={setMood}>
-              <SelectTrigger className="h-12 mt-1.5">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-white border border-slate-300 shadow-lg z-50">
-                <SelectItem value="😊">😊 Çok İyi</SelectItem>
-                <SelectItem value="🙂">🙂 İyi</SelectItem>
-                <SelectItem value="😐">😐 Normal</SelectItem>
-                <SelectItem value="😕">😕 Biraz Yorgun</SelectItem>
-                <SelectItem value="😔">😔 Kötü</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+      <form onSubmit={handleSubmit} className="space-y-8">
+        
+        {/* GENEL BİLGİLER */}
+        <Card className="rounded-[3rem] border-none shadow-sm bg-white p-10">
+           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div className="space-y-3">
+                 <Label className="font-black text-xs uppercase tracking-widest text-blue-600 ml-2 italic">Toplam Odaklanma (Dakika)</Label>
+                 <div className="relative">
+                    <Clock className="absolute left-5 top-1/2 -translate-y-1/2 text-blue-600" size={20} />
+                    <Input 
+                      required type="number" placeholder="Örn: 120" 
+                      value={totalDuration}
+                      onChange={(e) => setTotalDuration(e.target.value)}
+                      className={`h-16 pl-14 rounded-2xl border-blue-100 font-black text-xl bg-blue-50/30 focus:bg-white transition-all ${pomodoroValue ? 'ring-4 ring-blue-500/10 border-blue-500' : ''}`}
+                    />
+                    {pomodoroValue && (
+                      <span className="absolute right-4 top-1/2 -translate-y-1/2 bg-blue-600 text-white text-[10px] font-black px-3 py-1 rounded-lg">POMODORO'DAN GELDİ</span>
+                    )}
+                 </div>
+              </div>
+              <div className="space-y-3">
+                 <Label className="font-black text-xs uppercase tracking-widest text-slate-400 ml-2 italic">Günün Notu</Label>
+                 <Input 
+                  placeholder="Bugün nasıldı? (Opsiyonel)" 
+                  value={generalNote}
+                  onChange={(e) => setGeneralNote(e.target.value)}
+                  className="h-16 rounded-2xl border-slate-100 bg-slate-50 font-bold"
+                 />
+              </div>
+           </div>
+        </Card>
 
-          <div>
-            <Label className="text-sm font-medium">Toplam Çalışma Süresi (dakika)</Label>
-            <Input 
-              type="number" 
-              value={totalDuration}
-              onChange={(e) => setTotalDuration(Number(e.target.value))}
-              placeholder="180"
-              className="h-12 mt-1.5"
-            />
-          </div>
+        {/* DERS BAZLI DETAYLAR */}
+        <div className="space-y-6">
+           <div className="flex justify-between items-center px-4">
+              <h2 className="text-xl font-black italic flex items-center gap-3"><BookOpen className="text-blue-600" /> Çalışılan Dersler</h2>
+              <Button type="button" onClick={addSubject} className="bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-xl font-black px-6 h-10 transition-all">
+                <Plus size={18} className="mr-2" /> Branş Ekle
+              </Button>
+           </div>
 
-          <div className="md:col-span-2">
-            <Label className="text-sm font-medium">Genel Not</Label>
-            <Textarea 
-              value={generalNote}
-              onChange={(e) => setGeneralNote(e.target.value)}
-              placeholder="Bugün nasıl geçti? Zorlandığın konular..."
-              rows={3}
-              className="mt-1.5"
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Dersler */}
-      <div className="space-y-8">
-        <div className="flex justify-between items-center">
-          <h2 className="text-2xl font-semibold">Dersler</h2>
-          <Button onClick={addSubject} variant="outline" className="gap-2">
-            <Plus size={18} /> Yeni Ders Ekle
-          </Button>
+           {subjects.map((sub, index) => (
+             <Card key={index} className="rounded-[2.5rem] border-none shadow-sm bg-white p-8 relative group overflow-hidden border-l-8 border-l-blue-600">
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-end">
+                   <div className="md:col-span-3 space-y-2">
+                      <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Ders Adı</Label>
+                      <Input 
+                        placeholder="Matematik" value={sub.subject} 
+                        onChange={(e) => updateSubject(index, 'subject', e.target.value)}
+                        className="rounded-xl bg-slate-50 border-none font-bold h-12" required
+                      />
+                   </div>
+                   <div className="md:col-span-2 space-y-2">
+                      <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Çözülen Soru</Label>
+                      <Input 
+                        type="number" placeholder="80" value={sub.solved} 
+                        onChange={(e) => updateSubject(index, 'solved', e.target.value)}
+                        className="rounded-xl bg-slate-50 border-none font-bold h-12" required
+                      />
+                   </div>
+                   <div className="md:col-span-2 space-y-2">
+                      <Label className="text-[10px] font-black text-emerald-600 uppercase tracking-widest ml-1">Doğru</Label>
+                      <Input 
+                        type="number" placeholder="D" value={sub.correct} 
+                        onChange={(e) => updateSubject(index, 'correct', e.target.value)}
+                        className="rounded-xl bg-emerald-50/50 border-none font-black text-emerald-700 h-12"
+                      />
+                   </div>
+                   <div className="md:col-span-2 space-y-2">
+                      <Label className="text-[10px] font-black text-red-500 uppercase tracking-widest ml-1">Yanlış</Label>
+                      <Input 
+                        type="number" placeholder="Y" value={sub.wrong} 
+                        onChange={(e) => updateSubject(index, 'wrong', e.target.value)}
+                        className="rounded-xl bg-red-50/50 border-none font-black text-red-700 h-12"
+                      />
+                   </div>
+                   <div className="md:col-span-2 space-y-2">
+                      <Label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Süre (Dk)</Label>
+                      <Input 
+                        type="number" placeholder="40" value={sub.duration} 
+                        onChange={(e) => updateSubject(index, 'duration', e.target.value)}
+                        className="rounded-xl bg-slate-50 border-none font-bold h-12"
+                      />
+                   </div>
+                   <div className="md:col-span-1 flex justify-end">
+                      {subjects.length > 1 && (
+                        <Button type="button" onClick={() => removeSubject(index)} variant="ghost" className="text-slate-300 hover:text-red-500 rounded-xl h-12 w-12 p-0">
+                          <Trash2 size={20} />
+                        </Button>
+                      )}
+                   </div>
+                </div>
+                {/* Alt satır: Kaynak bilgisi */}
+                <div className="mt-6">
+                   <div className="relative">
+                      <MessageSquare className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" size={14} />
+                      <Input 
+                        placeholder="Kullanılan kaynak (Örn: 3-4-5 Yayınları)" 
+                        value={sub.source} 
+                        onChange={(e) => updateSubject(index, 'source', e.target.value)}
+                        className="pl-10 h-10 bg-slate-50/50 border-none rounded-lg text-xs italic font-medium"
+                      />
+                   </div>
+                </div>
+             </Card>
+           ))}
         </div>
 
-        {entries.map((entry, index) => (
-          <Card key={index} className="border border-slate-200">
-            <CardHeader className="bg-slate-50 border-b">
-              <div className="flex justify-between items-center">
-                <CardTitle className="text-lg">Ders {index + 1}</CardTitle>
-                {entries.length > 1 && (
-                  <Button variant="ghost" size="sm" onClick={() => removeSubject(index)} className="text-red-600">
-                    <Trash2 size={18} />
-                  </Button>
-                )}
-              </div>
-            </CardHeader>
-
-            <CardContent className="pt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <Label className="text-sm font-medium">Ders</Label>
-                <Select value={entry.subject} onValueChange={(val) => updateEntry(index, 'subject', val)}>
-                  <SelectTrigger className="h-12 mt-1.5">
-                    <SelectValue placeholder="Ders seçiniz..." />
-                  </SelectTrigger>
-                  <SelectContent className="bg-white border border-slate-300 shadow-xl z-[60]">
-                    {subjects.map((s) => (
-                      <SelectItem key={s} value={s} className="py-2.5">{s}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label className="text-sm font-medium">Kaynak</Label>
-                <Select value={entry.source} onValueChange={(val) => updateEntry(index, 'source', val)}>
-                  <SelectTrigger className="h-12 mt-1.5">
-                    <SelectValue placeholder="Kaynak seçiniz..." />
-                  </SelectTrigger>
-                  <SelectContent className="bg-white border border-slate-300 shadow-xl z-[60]">
-                    {sources.map((s) => (
-                      <SelectItem key={s} value={s} className="py-2.5">{s}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label className="text-sm font-medium">Çözülen Soru</Label>
-                <Input 
-                  type="number" 
-                  value={entry.questions}
-                  onChange={(e) => updateEntry(index, 'questions', Number(e.target.value))}
-                  className="h-12 mt-1.5"
-                  placeholder="85"
-                />
-              </div>
-
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <Label className="text-emerald-700 text-sm">Doğru</Label>
-                  <Input 
-                    type="number" 
-                    value={entry.correct} 
-                    onChange={(e) => updateEntry(index, 'correct', Number(e.target.value))} 
-                    className="h-12 mt-1.5" 
-                  />
-                </div>
-                <div>
-                  <Label className="text-red-700 text-sm">Yanlış</Label>
-                  <Input 
-                    type="number" 
-                    value={entry.wrong} 
-                    onChange={(e) => updateEntry(index, 'wrong', Number(e.target.value))} 
-                    className="h-12 mt-1.5" 
-                  />
-                </div>
-                <div>
-                  <Label className="text-sm">Boş</Label>
-                  <Input 
-                    type="number" 
-                    value={entry.blank} 
-                    onChange={(e) => updateEntry(index, 'blank', Number(e.target.value))} 
-                    className="h-12 mt-1.5" 
-                  />
-                </div>
-              </div>
-
-              <div>
-                <Label className="text-sm font-medium">Harcanan Süre (dk)</Label>
-                <Input 
-                  type="number" 
-                  value={entry.duration}
-                  onChange={(e) => updateEntry(index, 'duration', Number(e.target.value))}
-                  className="h-12 mt-1.5"
-                  placeholder="90"
-                />
-              </div>
-
-              <div className="md:col-span-2">
-                <Label className="text-sm font-medium">Ders Notu</Label>
-                <Textarea 
-                  value={entry.note}
-                  onChange={(e) => updateEntry(index, 'note', e.target.value)}
-                  placeholder="Bu derste notunuz..."
-                  className="mt-1.5"
-                  rows={3}
-                />
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      <div className="mt-12 flex justify-center">
         <Button 
-          onClick={handleSave} 
-          disabled={isSaving}
-          size="lg" 
-          className="px-16 py-6 text-lg font-medium"
+          disabled={submitting}
+          className="w-full h-20 rounded-[2rem] bg-slate-900 text-white font-black text-xl hover:bg-blue-600 transition-all shadow-2xl shadow-slate-200 mt-6"
         >
-          {isSaving ? "Kaydediliyor..." : "Günlük Çalışmayı Kaydet"}
+          {submitting ? <Loader2 className="animate-spin mr-2" /> : <><Save size={24} className="mr-3" /> Raporu Koçuma Gönder</>}
         </Button>
-      </div>
+      </form>
     </div>
+  );
+}
+
+// Next.js useSearchParams() kullanımı için Suspense zorunludur
+export default function DailyReportPage() {
+  return (
+    <Suspense fallback={<div className="flex h-screen items-center justify-center font-black animate-pulse">SAYFA YÜKLENİYOR...</div>}>
+      <DailyReportContent />
+    </Suspense>
   );
 }

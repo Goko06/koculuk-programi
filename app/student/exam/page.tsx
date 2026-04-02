@@ -1,196 +1,92 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
+import { createClient } from '@/lib/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { createClient } from '@/lib/supabase/client';
-import { toast } from 'sonner';
-import { Trophy, Calculator, Save, ArrowLeft, Loader2, Target } from 'lucide-react';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Plus, TrendingUp, BarChart3, Calendar, Loader2 } from 'lucide-react';
+import { format } from 'date-fns';
+import { tr } from 'date-fns/locale';
 import { useRouter } from 'next/navigation';
 
-export default function ExamEntryPage() {
-  const [student, setStudent] = useState<any>(null);
-  const [examType, setExamType] = useState('TYT');
-  const [examName, setExamName] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
+export default function StudentExamAnalysis() {
+  const [exams, setExams] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [scores, setScores] = useState<any>({});
-  
   const router = useRouter();
   const supabase = createClient();
 
-  const fetchStudentData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      
-      const { data: sData } = await supabase.from('students').select('*').eq('id', user.id).single();
-      setStudent(sData);
-      
-      const grade = sData?.grade_level || "";
-      // Sınıfa göre dersleri başlat
-      if (grade.includes("5") || grade.includes("6") || grade.includes("7") || grade.includes("8")) {
-        setExamType("LGS");
-        setScores({ 
-            turkce: { d: 0, y: 0, n: 0 }, 
-            matematik: { d: 0, y: 0, n: 0 }, 
-            fen: { d: 0, y: 0, n: 0 }, 
-            inkilap: { d: 0, y: 0, n: 0 }, 
-            din: { d: 0, y: 0, n: 0 }, 
-            ingilizce: { d: 0, y: 0, n: 0 } 
-        });
-      } else {
-        setExamType("TYT");
-        setScores({ 
-            turkce: { d: 0, y: 0, n: 0 }, 
-            matematik: { d: 0, y: 0, n: 0 }, 
-            sosyal: { d: 0, y: 0, n: 0 }, 
-            fen: { d: 0, y: 0, n: 0 } 
-        });
-      }
-    } catch (error) { 
-        console.error(error); 
-    } finally { 
-        setLoading(false); 
-    }
+  useEffect(() => {
+    const fetchExams = async () => {
+      try {
+        setLoading(true);
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+        const { data } = await supabase.from('exams').select('*').eq('student_id', user.id).order('exam_date', { ascending: true });
+        setExams(data || []);
+      } catch (error) { console.error(error); } finally { setLoading(false); }
+    };
+    fetchExams();
   }, [supabase]);
 
-  useEffect(() => { fetchStudentData(); }, [fetchStudentData]);
-
-  const updateScore = (lesson: string, field: 'd' | 'y', value: string) => {
-    const val = Number(value);
-    setScores((prev: any) => {
-      const newLessonScore = { ...prev[lesson], [field]: val };
-      // Net hesapla (4 yanlış 1 doğruyu götürür)
-      const calculatedNet = newLessonScore.d - (newLessonScore.y * 0.25);
-      newLessonScore.n = calculatedNet < 0 ? 0 : calculatedNet;
-      return { ...prev, [lesson]: newLessonScore };
-    });
+  const stats = {
+    total: exams.length,
+    lastNet: exams.length > 0 ? exams[exams.length - 1].total_net : 0,
+    avgNet: exams.length > 0 ? (exams.reduce((acc, curr) => acc + curr.total_net, 0) / exams.length).toFixed(1) : 0,
+    bestNet: exams.length > 0 ? Math.max(...exams.map(e => e.total_net)) : 0
   };
 
-  const totalNet = Object.values(scores).reduce((acc: number, curr: any) => acc + (curr.n || 0), 0);
-
-  const handleSaveExam = async () => {
-    if (!examName) return toast.error("Deneme adını girin.");
-    setIsSaving(true);
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      
-      // BURASI ÇOK ÖNEMLİ: Tablo adı 'exams' (çoğul) olmalı
-      const { error } = await supabase.from('exams').insert([{
-        student_id: user?.id,
-        exam_type: examType,
-        exam_name: examName,
-        results_data: scores, // DB'deki sütun isminle aynı olmalı
-        total_net: totalNet,
-        exam_date: new Date().toISOString()
-      }]);
-
-      if (error) {
-        console.error("Supabase Hatası:", error);
-        throw error;
-      }
-
-      toast.success("Deneme sınavı başarıyla kaydedildi! 🚀");
-      router.push('/student');
-    } catch (error: any) {
-      toast.error("Kaydedilemedi: " + error.message);
-    } finally { 
-        setIsSaving(false); 
-    }
-  };
-
-  if (loading) return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-white">
-      <Loader2 className="animate-spin text-blue-600 h-12 w-12 mb-4" />
-      <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Yükleniyor...</p>
-    </div>
-  );
+  if (loading) return <div className="flex h-screen items-center justify-center bg-slate-50 font-black text-blue-600 animate-pulse uppercase tracking-widest">VERİLER ANALİZ EDİLİYOR...</div>;
 
   return (
-    <div className="max-w-5xl mx-auto p-4 md:p-8 space-y-8 bg-slate-50 min-h-screen text-slate-900 font-sans">
-      <div className="flex justify-between items-center bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
-        <Button variant="outline" onClick={() => router.back()} className="rounded-2xl h-12 w-12 p-0 shadow-sm border-slate-100"><ArrowLeft size={20} /></Button>
+    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-8 bg-slate-50 min-h-screen text-slate-900 font-sans">
+      <div className="flex flex-col md:flex-row justify-between items-center gap-6 bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100">
         <div className="flex items-center gap-4">
-            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Anlık Net</span>
-            <div className="bg-blue-600 text-white px-8 py-3 rounded-2xl font-black text-2xl shadow-xl shadow-blue-100 tracking-tighter">
-                {totalNet.toFixed(2)}
-            </div>
+          <div className="p-4 bg-orange-600 rounded-[1.5rem] text-white shadow-xl shadow-orange-100"><BarChart3 size={28} /></div>
+          <div><h1 className="text-2xl font-black tracking-tight">Deneme Analiz Merkezi</h1><p className="text-slate-400 font-bold text-xs uppercase tracking-widest mt-1 italic">Gelişimini ve Net Artışını Takip Et</p></div>
         </div>
+        <Button onClick={() => router.push('/student/exam/add')} className="w-full md:w-auto bg-orange-600 hover:bg-orange-700 text-white rounded-2xl px-8 h-14 font-black shadow-xl shadow-orange-100 flex items-center gap-3"><Plus size={22} /> Yeni Deneme Ekle</Button>
       </div>
 
-      <Card className="border-none shadow-sm rounded-[3rem] overflow-hidden bg-white">
-        <CardHeader className="bg-slate-900 text-white p-10">
-           <div className="flex flex-col md:flex-row justify-between items-center gap-6">
-              <div className="space-y-1 text-center md:text-left">
-                <CardTitle className="text-2xl font-black uppercase tracking-widest flex items-center justify-center md:justify-start gap-3">
-                   <Trophy size={28} className="text-amber-400" /> {examType} Deneme Girişi
-                </CardTitle>
-                <p className="text-slate-400 text-[10px] font-black tracking-[0.3em] italic uppercase">Analiz İçin Verileri Eksiksiz Doldurun</p>
-              </div>
-           </div>
-        </CardHeader>
-        
-        <CardContent className="p-10 space-y-10">
-           <div className="space-y-3">
-              <Label className="font-black text-xs uppercase tracking-[0.2em] text-slate-500 ml-2">Deneme Sınavı Adı / Yayın</Label>
-              <Input 
-                placeholder="Örn: 3D Yayınları Türkiye Geneli" 
-                className="h-16 rounded-[1.5rem] border-slate-100 bg-slate-50 font-black text-xl px-8 focus:bg-white transition-all shadow-inner"
-                value={examName}
-                onChange={(e) => setExamName(e.target.value)}
-              />
-           </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <Card className="rounded-[2rem] border-none shadow-sm bg-white p-6"><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 italic">Son Netin</p><h3 className="text-3xl font-black text-orange-600">{stats.lastNet}</h3></Card>
+        <Card className="rounded-[2rem] border-none shadow-sm bg-white p-6"><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 italic">Ortalama Net</p><h3 className="text-3xl font-black text-blue-600">{stats.avgNet}</h3></Card>
+        <Card className="rounded-[2rem] border-none shadow-sm bg-white p-6"><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 italic">En Yüksek Net</p><h3 className="text-3xl font-black text-emerald-600">{stats.bestNet}</h3></Card>
+        <Card className="rounded-[2rem] border-none shadow-sm bg-slate-900 p-6"><p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 italic">Toplam Deneme</p><h3 className="text-3xl font-black text-white">{stats.total}</h3></Card>
+      </div>
 
-           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              {Object.keys(scores).map((lesson) => (
-                <div key={lesson} className="p-8 bg-slate-50/50 rounded-[2.5rem] border border-slate-100 space-y-6 hover:border-blue-200 transition-all group">
-                   <div className="flex justify-between items-center">
-                      <span className="font-black text-slate-900 uppercase tracking-tighter text-xl">{lesson}</span>
-                      <div className="text-right">
-                        <span className="block text-[9px] font-black text-slate-400 uppercase mb-1">Net</span>
-                        <span className="bg-white text-blue-600 px-4 py-1.5 rounded-xl text-sm font-black shadow-sm border border-blue-50">
-                            {scores[lesson].n.toFixed(2)}
-                        </span>
-                      </div>
-                   </div>
-                   <div className="grid grid-cols-2 gap-6">
-                      <div className="space-y-2">
-                         <Label className="text-[10px] font-black text-emerald-600 uppercase tracking-widest ml-1">Doğru</Label>
-                         <Input 
-                            type="number" 
-                            className="h-14 rounded-2xl border-none bg-white font-black text-center text-2xl shadow-sm text-emerald-600"
-                            value={scores[lesson].d}
-                            onChange={(e) => updateScore(lesson, 'd', e.target.value)}
-                         />
-                      </div>
-                      <div className="space-y-2">
-                         <Label className="text-[10px] font-black text-red-500 uppercase tracking-widest ml-1">Yanlış</Label>
-                         <Input 
-                            type="number" 
-                            className="h-14 rounded-2xl border-none bg-white font-black text-center text-2xl shadow-sm text-red-500"
-                            value={scores[lesson].y}
-                            onChange={(e) => updateScore(lesson, 'y', e.target.value)}
-                         />
-                      </div>
-                   </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2">
+          <Card className="rounded-[3rem] border-none shadow-sm bg-white p-8">
+            <h3 className="text-xl font-black flex items-center gap-3 italic mb-8"><TrendingUp className="text-orange-600" /> Net Gelişim Grafiği</h3>
+            <div className="h-[350px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={exams}>
+                  <defs><linearGradient id="colorNet" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f97316" stopOpacity={0.3}/><stop offset="95%" stopColor="#f97316" stopOpacity={0}/></linearGradient></defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="exam_date" tickFormatter={(str) => format(new Date(str), 'd MMM', { locale: tr })} axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontWeight: 700, fontSize: 11}} />
+                  <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontWeight: 700, fontSize: 11}} />
+                  <Tooltip contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
+                  <Area type="monotone" dataKey="total_net" stroke="#f97316" strokeWidth={4} fillOpacity={1} fill="url(#colorNet)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+        </div>
+        <div className="space-y-6">
+          <h2 className="text-xl font-black flex items-center gap-2 px-4 italic tracking-tight uppercase"><Calendar className="text-orange-600" /> Geçmiş</h2>
+          <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+            {[...exams].reverse().map((exam) => (
+              <Card key={exam.id} className="rounded-[2rem] border-none shadow-sm bg-white p-5 hover:shadow-md transition-all group">
+                <div className="flex justify-between items-center">
+                  <div><h4 className="font-black text-slate-900 group-hover:text-orange-600 transition-colors uppercase italic">{exam.exam_name}</h4><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest italic mt-1">{format(new Date(exam.exam_date), 'dd MMMM yyyy', { locale: tr })}</p></div>
+                  <div className="text-right"><span className="text-2xl font-black text-slate-900 leading-none">{exam.total_net}</span><p className="text-[10px] font-black text-slate-300 uppercase tracking-tighter">NET</p></div>
                 </div>
-              ))}
-           </div>
-
-           <Button 
-             onClick={handleSaveExam}
-             disabled={isSaving}
-             className="w-full h-24 bg-slate-900 hover:bg-black text-white rounded-[2.5rem] font-black text-2xl shadow-2xl gap-4 transition-all active:scale-[0.98] mt-4 group"
-           >
-             {isSaving ? <Loader2 className="animate-spin" size={32} /> : <Target size={32} className="text-blue-400 group-hover:scale-110 transition-transform" />}
-             {isSaving ? "Kaydediliyor..." : "Deneme Sınavını Tamamla"}
-           </Button>
-        </CardContent>
-      </Card>
+              </Card>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

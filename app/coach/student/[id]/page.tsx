@@ -7,291 +7,214 @@ import { Button } from '@/components/ui/button';
 import { createClient } from '@/lib/supabase/client';
 import { 
   ArrowLeft, CheckCircle2, Clock, BarChart3, Loader2, 
-  BookOpen, MessageSquare, Target, Activity, Send, TrendingUp, Calendar
+  BookOpen, MessageSquare, Target, Activity, Send, TrendingUp, Calendar,
+  Award, School, Rocket, Sparkles, Zap, GraduationCap, ChevronRight
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { tr } from 'date-fns/locale';
+import { toast } from 'sonner';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+
+// Öğrenci sayfasındakiyle aynı müfredat yapısı
+const SYLLABUS: any = {
+  "Matematik": ["Temel Kavramlar", "Sayı Basamakları", "Bölme-Bölünebilme", "EBOB-EKOK", "Rasyonel Sayılar", "Üslü Sayılar", "Köklü Sayılar", "Çarpanlara Ayırma", "Denklem Çözme"],
+  "Türkçe": ["Sözcük Anlamı", "Cümle Anlamı", "Paragraf", "Ses Bilgisi", "Yazım Kuralları", "Noktalama İşaretleri", "Sözcük Yapısı"],
+  "Fizik": ["Fizik Bilimine Giriş", "Madde ve Özellikleri", "Hareket ve Kuvvet", "Enerji", "Isı ve Sıcaklık", "Elektrostatik"]
+};
 
 export default function CoachStudentDetail() {
   const { id } = useParams();
   const router = useRouter();
+  const supabase = createClient();
+
   const [student, setStudent] = useState<any>(null);
-  const [latestProgram, setLatestProgram] = useState<any>(null);
+  const [target, setTarget] = useState<any>(null);
+  const [exams, setExams] = useState<any[]>([]);
   const [dailyEntries, setDailyEntries] = useState<any[]>([]);
+  const [subjectProgress, setSubjectProgress] = useState<any[]>([]); // KONU TAKİBİ İÇİN STATE
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState<string | null>(null);
-
-  const supabase = createClient();
 
   const fetchData = useCallback(async () => {
     if (!id) return;
     try {
       setLoading(true);
-      // 1. Öğrenci Bilgisi
+      
+      // 1. Öğrenci & Hedef Bilgisi
       const { data: sData } = await supabase.from('students').select('*').eq('id', id).single();
+      const { data: tData } = await supabase.from('student_targets').select('*').eq('student_id', id).maybeSingle();
+      
+      // 2. Konu Takibi Verileri (YENİ)
+      const { data: pData } = await supabase.from('student_subject_progress').select('*').eq('student_id', id).eq('is_completed', true);
+
+      // 3. Deneme & Günlük Raporlar
+      const { data: eData } = await supabase.from('exams').select('*').eq('student_id', id).order('exam_date', { ascending: true });
+      const { data: dData } = await supabase.from('daily_entries').select('*').eq('student_id', id).order('entry_date', { ascending: false }).limit(5);
+
       setStudent(sData);
-
-      // 2. En Güncel Haftalık Program
-      const { data: pData } = await supabase
-        .from('weekly_programs')
-        .select('*')
-        .eq('student_id', id)
-        .order('week_start_date', { ascending: false })
-        .limit(1)
-        .single();
-      setLatestProgram(pData || null);
-
-      // 3. Günlük Çalışma Raporları
-      const { data: dData } = await supabase
-        .from('daily_entries')
-        .select('*')
-        .eq('student_id', id)
-        .order('entry_date', { ascending: false })
-        .limit(10);
+      setTarget(tData);
+      setSubjectProgress(pData || []);
+      setExams(eData || []);
       setDailyEntries(dData || []);
-    } catch (error) { 
-      console.error("Veri çekme hatası:", error); 
-    } finally { 
-      setLoading(false); 
-    }
+
+    } catch (error) { console.error("Hata:", error); } finally { setLoading(false); }
   }, [id, supabase]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Net Ortalamaları
+  const avgs = {
+    tyt: exams.filter(e => e.exam_type === 'TYT').length > 0 ? Number((exams.filter(e => e.exam_type === 'TYT').reduce((acc, curr) => acc + curr.total_net, 0) / exams.filter(e => e.exam_type === 'TYT').length).toFixed(1)) : 0,
+    ayt: exams.filter(e => e.exam_type === 'AYT').length > 0 ? Number((exams.filter(e => e.exam_type === 'AYT').reduce((acc, curr) => acc + curr.total_net, 0) / exams.filter(e => e.exam_type === 'AYT').length).toFixed(1)) : 0
+  };
+
   const handleSaveFeedback = async (entryId: string) => {
     if (!feedback[entryId]) return;
     setSubmitting(entryId);
-    const { error } = await supabase
-      .from('daily_entries')
-      .update({ coach_note: feedback[entryId] })
-      .eq('id', entryId);
-
-    if (!error) {
-        // State'i temizle ve veriyi yenile
-        const newFeedback = { ...feedback };
-        delete newFeedback[entryId];
-        setFeedback(newFeedback);
-        fetchData();
-    }
+    const { error } = await supabase.from('daily_entries').update({ coach_note: feedback[entryId] }).eq('id', entryId);
+    if (!error) { toast.success("Not iletildi."); fetchData(); }
     setSubmitting(null);
   };
 
-  const odevStats = (() => {
-    if (!latestProgram?.program_data) return { total: 0, done: 0, questions: 0, percent: 0 };
-    let t = 0, d = 0, q = 0;
-    Object.keys(latestProgram.program_data).forEach(day => {
-      (latestProgram.program_data[day] || []).forEach((task: any) => {
-        t++; 
-        if (task.completed) { 
-          d++; 
-          q += (Number(task.solved_questions) || 0); 
-        }
-      });
-    });
-    return { total: t, done: d, questions: q, percent: t > 0 ? Math.round((d / t) * 100) : 0 };
-  })();
-
-  if (loading) return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-white">
-      <Loader2 className="animate-spin text-blue-600 h-12 w-12 mb-4" />
-      <p className="text-slate-500 font-black italic">Veriler Analiz Ediliyor...</p>
-    </div>
-  );
+  if (loading) return <div className="flex h-screen items-center justify-center bg-white"><Loader2 className="animate-spin text-blue-600 h-12 w-12" /></div>;
 
   return (
-    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-8 bg-slate-50 min-h-screen text-slate-900 font-sans">
+    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-10 bg-slate-50 min-h-screen text-slate-900 font-sans">
       
-      {/* ÜST NAVİGASYON */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <Button variant="outline" onClick={() => router.back()} className="gap-2 bg-white border-slate-200 shadow-sm rounded-2xl px-6 h-12 font-bold hover:bg-slate-50 transition-all">
-          <ArrowLeft size={18} /> Geri Dön
+      {/* ÜST PANEL */}
+      <div className="flex flex-col sm:flex-row justify-between items-center gap-4 bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
+        <Button variant="ghost" onClick={() => router.back()} className="rounded-2xl px-6 h-12 font-bold bg-slate-50">
+          <ArrowLeft size={18} className="mr-2" /> Geri Dön
         </Button>
-        
-        <Button 
-          onClick={() => router.push(`/coach/assign-program/${id}`)} 
-          className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white rounded-2xl shadow-xl shadow-blue-100 font-black px-8 h-14 gap-2 transition-transform active:scale-95"
-        >
-          <Calendar size={20} /> Yeni Program Atama
-        </Button>
+        <div className="flex gap-3">
+           <Button onClick={() => router.push(`/coach/assign-program/${id}`)} className="bg-blue-600 hover:bg-blue-700 text-white rounded-2xl shadow-xl shadow-blue-100 font-black px-8 h-12 gap-2">
+              <Calendar size={18} /> Programı Düzenle
+           </Button>
+        </div>
       </div>
 
-      {/* ÖĞRENCİ PROFİL KARTI */}
-      <Card className="bg-white border-none shadow-sm rounded-[2.5rem] p-8 overflow-hidden relative">
-        <div className="flex flex-col md:flex-row justify-between items-center gap-8 relative z-10">
-          <div className="flex items-center gap-6">
-            <div className="w-24 h-24 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-[2rem] flex items-center justify-center text-white text-4xl font-black shadow-2xl uppercase tracking-tighter">
-              {student?.full_name?.charAt(0)}
-            </div>
-            <div>
-              <h1 className="text-3xl font-black text-slate-900 tracking-tight leading-none mb-2">{student?.full_name}</h1>
-              <div className="flex items-center gap-2">
-                <span className="bg-blue-50 text-blue-700 px-3 py-1 rounded-xl text-[10px] font-black uppercase tracking-widest border border-blue-100 italic">
-                    {student?.grade_level}
-                </span>
-                <p className="text-slate-400 font-bold text-sm">{student?.email}</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4 w-full md:w-auto">
-            <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100 text-center min-w-[150px]">
-              <p className="text-[10px] font-black text-slate-400 uppercase mb-1 tracking-widest">Haftalık Soru</p>
-              <p className="text-4xl font-black text-slate-900 leading-none">{odevStats.questions}</p>
-            </div>
-            <div className="bg-emerald-50 p-6 rounded-[2rem] border border-emerald-100 text-center min-w-[150px]">
-              <p className="text-[10px] font-black text-emerald-600 uppercase mb-1 tracking-widest italic">Başarı Oranı</p>
-              <p className="text-4xl font-black text-emerald-600 leading-none">%{odevStats.percent}</p>
-            </div>
-          </div>
-        </div>
-        <div className="absolute top-0 right-0 w-32 h-32 bg-blue-50 rounded-full -mr-16 -mt-16 opacity-50" />
-      </Card>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         
-        {/* SOL KOLON: GÜNLÜK RAPORLAR */}
-        <div className="lg:col-span-2 space-y-6">
-          <h2 className="text-xl font-black flex items-center gap-2 px-2 tracking-tight"><Activity className="text-blue-600" /> Detaylı Günlük Raporlar</h2>
-          
-          {dailyEntries.map((entry) => (
-            <Card key={entry.id} className="bg-white rounded-[2.5rem] border-none shadow-sm overflow-hidden group transition-all hover:shadow-md">
-              <div className="bg-slate-50/50 p-6 border-b border-slate-100 flex justify-between items-center">
-                <div className="flex items-center gap-4">
-                  <span className="text-3xl drop-shadow-sm">{entry.mood || '😐'}</span>
-                  <div>
-                    <span className="font-black text-slate-800 text-lg leading-tight block">
-                        {format(new Date(entry.entry_date), 'dd MMMM EEEE', { locale: tr })}
-                    </span>
-                    <span className="text-xs font-black text-blue-600 uppercase tracking-tighter flex items-center gap-1 mt-0.5">
-                        <Clock size={12} /> {entry.total_duration_minutes} Dakika Çalışma
-                    </span>
+        {/* SOL: ÖĞRENCİ VE HEDEF ANALİZİ */}
+        <div className="lg:col-span-8 space-y-8">
+          <Card className="rounded-[3rem] border-none shadow-2xl bg-slate-900 p-10 text-white relative overflow-hidden group">
+            <div className="relative z-10">
+               <div className="flex justify-between items-start mb-10">
+                  <div className="flex gap-6 items-center">
+                    <div className="w-20 h-20 bg-blue-600 rounded-[1.5rem] flex items-center justify-center text-3xl font-black">{student?.full_name?.charAt(0)}</div>
+                    <div>
+                      <h2 className="text-3xl font-black tracking-tight">{student?.full_name}</h2>
+                      <p className="text-blue-400 font-bold italic">{target ? `${target.university_name} - ${target.department_name}` : 'Hedef Belirlenmedi'}</p>
+                    </div>
                   </div>
-                </div>
-              </div>
+                  <School size={48} className="opacity-10" />
+               </div>
 
-              <CardContent className="p-8">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div className="space-y-3">
+                     <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">TYT Hedefine Yakınlık</p>
+                     <div className="flex justify-between text-xl font-black">
+                        <span>%{target ? Math.min(Math.round((avgs.tyt / target.target_net_tyt) * 100), 100) : 0}</span>
+                        <span className="text-sm text-slate-500">{avgs.tyt} / {target?.target_net_tyt || 0} Net</span>
+                     </div>
+                     <div className="w-full bg-white/5 h-2 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-600 rounded-full" style={{ width: `${target ? (avgs.tyt / target.target_net_tyt) * 100 : 0}%` }} />
+                     </div>
+                  </div>
+                  <div className="space-y-3">
+                     <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">AYT Hedefine Yakınlık</p>
+                     <div className="flex justify-between text-xl font-black">
+                        <span>%{target ? Math.min(Math.round((avgs.ayt / target.target_net_ayt) * 100), 100) : 0}</span>
+                        <span className="text-sm text-slate-500">{avgs.ayt} / {target?.target_net_ayt || 0} Net</span>
+                     </div>
+                     <div className="w-full bg-white/5 h-2 rounded-full overflow-hidden">
+                        <div className="h-full bg-orange-600 rounded-full" style={{ width: `${target ? (avgs.ayt / target.target_net_ayt) * 100 : 0}%` }} />
+                     </div>
+                  </div>
+               </div>
+            </div>
+            <div className="absolute -right-20 -bottom-20 w-80 h-80 bg-blue-600/10 blur-[100px] rounded-full" />
+          </Card>
+
+          {/* KONU TAKİBİ ANALİZ KARTI (YENİ) */}
+          <Card className="rounded-[3rem] border-none shadow-sm bg-white p-10">
+            <h3 className="text-xl font-black flex items-center gap-3 italic mb-8"><GraduationCap className="text-blue-600" /> Müfredat İlerleme Durumu</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+              {Object.keys(SYLLABUS).map((subject) => {
+                const totalTopics = SYLLABUS[subject].length;
+                const completedCount = subjectProgress.filter(p => p.subject_name === subject).length;
+                const percent = Math.round((completedCount / totalTopics) * 100);
+
+                return (
+                  <div key={subject} className="space-y-4 p-6 bg-slate-50 rounded-[2rem] border border-slate-100">
+                    <div className="flex justify-between items-center">
+                       <span className="font-black text-slate-900 text-sm uppercase italic">{subject}</span>
+                       <span className="text-xs font-black text-blue-600">%{percent}</span>
+                    </div>
+                    <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
+                       <div className="h-full bg-blue-600 rounded-full transition-all duration-1000" style={{ width: `${percent}%` }} />
+                    </div>
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter text-right">{completedCount} / {totalTopics} Konu Bitti</p>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+
+          {/* NET GRAFİĞİ */}
+          <Card className="rounded-[3rem] border-none shadow-sm bg-white p-10">
+            <h3 className="text-xl font-black flex items-center gap-3 italic mb-8"><TrendingUp className="text-orange-600" /> Net Gelişim Trendi</h3>
+            <div className="h-[300px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={exams}>
+                  <defs><linearGradient id="colorNet" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#f97316" stopOpacity={0.2}/><stop offset="95%" stopColor="#f97316" stopOpacity={0}/></linearGradient></defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="exam_date" tickFormatter={(str) => format(new Date(str), 'd MMM', { locale: tr })} axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontWeight: 700, fontSize: 11}} />
+                  <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontWeight: 700, fontSize: 11}} />
+                  <Tooltip contentStyle={{ borderRadius: '1.5rem', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)' }} />
+                  <Area type="monotone" dataKey="total_net" stroke="#f97316" strokeWidth={5} fillOpacity={1} fill="url(#colorNet)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+        </div>
+
+        {/* SAĞ: GÜNLÜK RAPORLAR VE NOTLAR */}
+        <div className="lg:col-span-4 space-y-8">
+          <h2 className="text-xl font-black flex items-center gap-2 px-2 italic"><Activity className="text-blue-600" /> Günlük Raporlar</h2>
+          {dailyEntries.map((entry) => (
+            <Card key={entry.id} className="bg-white rounded-[2.5rem] border-none shadow-sm overflow-hidden group">
+              <div className="bg-slate-50/50 p-5 border-b flex justify-between items-center">
+                 <div className="flex items-center gap-3">
+                    <span className="text-2xl">{entry.mood || '😐'}</span>
+                    <span className="font-black text-slate-800 text-sm">{format(new Date(entry.entry_date), 'dd MMM EEEE', { locale: tr })}</span>
+                 </div>
+                 <span className="text-[10px] font-black bg-blue-50 text-blue-600 px-2 py-1 rounded-lg">{entry.total_duration_minutes} dk</span>
+              </div>
+              <CardContent className="p-6">
+                <div className="space-y-4 mb-4">
                   {(entry.subjects_data || []).map((sub: any, idx: number) => (
-                    <div key={idx} className="p-5 bg-slate-50 rounded-[1.5rem] border border-slate-100 group-hover:border-blue-200 transition-colors">
-                      <div className="flex justify-between items-start mb-3">
-                        <span className="font-black text-slate-800 tracking-tight leading-none">{sub.subject}</span>
-                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{sub.duration} dk</span>
-                      </div>
-                      <div className="flex gap-2">
-                        <span className="bg-emerald-100 text-emerald-700 px-3 py-1 rounded-lg text-[10px] font-black italic">D: {sub.correct}</span>
-                        <span className="bg-red-100 text-red-700 px-3 py-1 rounded-lg text-[10px] font-black italic">Y: {sub.wrong}</span>
-                      </div>
-                      <p className="text-[10px] text-slate-400 mt-3 flex items-center gap-1.5 opacity-70 italic font-bold tracking-tight">
-                        <BookOpen size={10} className="text-blue-500" /> {sub.source}
-                      </p>
+                    <div key={idx} className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex justify-between items-center">
+                       <span className="text-xs font-black text-slate-700">{sub.subject}</span>
+                       <span className="text-[10px] font-bold text-emerald-600">{sub.correct}D / {sub.wrong}Y</span>
                     </div>
                   ))}
                 </div>
-
-                {entry.general_note && (
-                  <div className="mt-6 p-5 bg-amber-50/50 rounded-[1.5rem] border border-amber-100 flex gap-4 shadow-sm shadow-amber-50">
-                    <MessageSquare size={20} className="text-amber-500 shrink-0 mt-0.5" />
-                    <p className="text-sm text-amber-900 italic font-bold leading-relaxed">"{entry.general_note}"</p>
-                  </div>
-                )}
-
-                {/* KOÇ GERİ BİLDİRİMİ */}
-                <div className="mt-8 pt-8 border-t border-slate-50">
-                   {entry.coach_note && !feedback[entry.id] ? (
-                     <div className="bg-blue-600 text-white p-6 rounded-[2rem] shadow-xl shadow-blue-100 flex justify-between items-center transition-all hover:scale-[1.01]">
-                        <div className="flex gap-4 items-start">
-                           <Send size={18} className="text-blue-200 mt-1" />
-                           <p className="text-sm font-bold italic tracking-tight leading-relaxed">"{entry.coach_note}"</p>
-                        </div>
-                        <Button 
-                          variant="ghost" 
-                          className="text-white/60 hover:text-white font-black text-[10px] uppercase tracking-widest" 
-                          onClick={() => setFeedback({ ...feedback, [entry.id]: entry.coach_note })}
-                        >Düzenle</Button>
-                     </div>
-                   ) : (
-                     <div className="relative">
-                        <textarea 
-                          className="w-full min-h-[120px] p-6 bg-slate-50 border border-slate-100 rounded-[2rem] text-sm font-bold text-slate-700 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all pr-20 placeholder:text-slate-300 italic"
-                          placeholder="Öğrenciye bir not bırak..."
-                          value={feedback[entry.id] || ""}
-                          onChange={(e) => setFeedback({ ...feedback, [entry.id]: e.target.value })}
-                        />
-                        <Button 
-                          disabled={submitting === entry.id || !feedback[entry.id]}
-                          onClick={() => handleSaveFeedback(entry.id)}
-                          className="absolute bottom-4 right-4 bg-blue-600 hover:bg-blue-700 text-white h-12 w-12 rounded-2xl p-0 shadow-lg shadow-blue-100 transition-all active:scale-90"
-                        >
-                          {submitting === entry.id ? <Loader2 className="animate-spin h-5 w-5" /> : <Send size={20} />}
-                        </Button>
-                     </div>
-                   )}
+                <div className="relative">
+                  <textarea 
+                    className="w-full min-h-[80px] p-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold text-slate-700 outline-none"
+                    placeholder="Geri bildirim yaz..."
+                    value={feedback[entry.id] || entry.coach_note || ""}
+                    onChange={(e) => setFeedback({ ...feedback, [entry.id]: e.target.value })}
+                  />
+                  <Button disabled={submitting === entry.id} onClick={() => handleSaveFeedback(entry.id)} className="absolute bottom-2 right-2 bg-slate-900 text-white hover:bg-blue-600 h-8 w-8 rounded-lg p-0">
+                    <Send size={14} />
+                  </Button>
                 </div>
               </CardContent>
             </Card>
           ))}
-
-          {dailyEntries.length === 0 && (
-            <div className="text-center py-20 bg-white rounded-[3rem] border border-dashed border-slate-200">
-                <Activity size={48} className="mx-auto text-slate-200 mb-4" />
-                <p className="text-slate-400 font-black italic tracking-tight text-lg">Öğrenci henüz rapor girmedi.</p>
-            </div>
-          )}
-        </div>
-
-        {/* SAĞ KOLON: İLERLEME VE ANALİZ */}
-        <div className="space-y-8">
-          <h2 className="text-xl font-black flex items-center gap-2 px-2 tracking-tight"><Target className="text-blue-600" /> Haftalık İlerleme</h2>
-          
-          <Card className="bg-white rounded-[3rem] border-none shadow-sm p-10 text-center relative group">
-              <div className="relative inline-flex items-center justify-center w-40 h-40 mb-6">
-                  <svg className="w-full h-full transform -rotate-90">
-                    <circle cx="80" cy="80" r="72" stroke="currentColor" strokeWidth="12" fill="transparent" className="text-slate-50" />
-                    <circle 
-                      cx="80" cy="80" r="72" 
-                      stroke="currentColor" strokeWidth="12" fill="transparent" 
-                      strokeDasharray={452} 
-                      strokeDashoffset={452 - (452 * odevStats.percent) / 100} 
-                      className="text-blue-600 transition-all duration-1000 ease-out" 
-                      strokeLinecap="round" 
-                    />
-                  </svg>
-                  <span className="absolute text-4xl font-black tracking-tighter">%{odevStats.percent}</span>
-              </div>
-              <div className="space-y-4 text-left border-t border-slate-50 pt-8 mt-4">
-                <div className="flex justify-between items-center"><span className="text-slate-400 font-black text-[10px] uppercase tracking-[0.2em] italic">Ödevler</span><span className="font-black text-slate-900">{odevStats.total} Görev</span></div>
-                <div className="flex justify-between items-center"><span className="text-emerald-500 font-black text-[10px] uppercase tracking-[0.2em] italic">Biten</span><span className="font-black text-emerald-600">{odevStats.done} Tamamlanan</span></div>
-                <div className="flex justify-between items-center"><span className="text-blue-500 font-black text-[10px] uppercase tracking-[0.2em] italic">Soru</span><span className="font-black text-blue-600">{odevStats.questions} Soru</span></div>
-              </div>
-          </Card>
-
-          <Card className="bg-slate-900 rounded-[3rem] border-none shadow-2xl p-8 text-white relative overflow-hidden group">
-             <div className="relative z-10">
-                <div className="flex items-center gap-3 mb-8">
-                   <div className="p-3 bg-white/10 rounded-2xl backdrop-blur-md border border-white/10 group-hover:bg-blue-600/30 transition-colors">
-                      <BarChart3 size={24} className="text-blue-400" />
-                   </div>
-                   <h3 className="font-black text-xl tracking-tight">Koç Analizi</h3>
-                </div>
-                <div className="space-y-5">
-                    <div className="p-6 bg-white/5 rounded-[2rem] border border-white/10 hover:bg-white/10 transition-colors">
-                       <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-1 italic">Günlük Ortalama Odak</p>
-                       <p className="text-3xl font-black tracking-tighter">
-                          {dailyEntries.length > 0 ? Math.round(dailyEntries.reduce((acc, curr) => acc + (curr.total_duration_minutes || 0), 0) / dailyEntries.length) : 0} <span className="text-sm font-bold text-slate-500 uppercase tracking-widest ml-1">dk</span>
-                       </p>
-                    </div>
-                    <div className="p-6 bg-white/5 rounded-[2rem] border border-white/10 flex justify-between items-center group/item hover:bg-white/10 transition-all">
-                       <div>
-                          <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-1 italic">Süreklilik</p>
-                          <p className="text-2xl font-black text-emerald-400 tracking-tight">Yükselişte</p>
-                       </div>
-                       <TrendingUp className="text-emerald-400 group-hover/item:scale-125 transition-transform" size={32} />
-                    </div>
-                </div>
-             </div>
-             <div className="absolute -bottom-12 -right-12 w-56 h-56 bg-blue-600/10 blur-[80px] rounded-full group-hover:bg-blue-600/20 transition-all duration-1000" />
-          </Card>
         </div>
       </div>
     </div>

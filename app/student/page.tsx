@@ -1,271 +1,222 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { 
-  BookOpen, 
-  Trophy, 
-  Activity, 
-  MessageSquare, 
-  Calendar, 
-  ChevronRight,
-  TrendingUp,
-  Clock,
-  CheckCircle2,
-  LayoutDashboard,
-  Loader2,
-  Smile // Eksik olan bu satırı ekledik
+  BookOpen, Calendar, TrendingUp, 
+  ChevronRight, GraduationCap,
+  Rocket, School, Timer, FileText, 
+  LogOut, Sparkles
 } from 'lucide-react';
-import { format } from 'date-fns';
-import { tr } from 'date-fns/locale';
+import { useRouter } from 'next/navigation';
+import NotificationBell from '@/components/NotificationBell';
 
 export default function StudentDashboard() {
   const [student, setStudent] = useState<any>(null);
-  const [latestProgram, setLatestProgram] = useState<any>(null);
-  const [stats, setStats] = useState({ totalQuestions: 0, avgMood: '😊', weeklyDuration: 0 });
+  const [target, setTarget] = useState<any>(null);
+  const [avgs, setAvgs] = useState({ tyt: 0, ayt: 0 });
   const [loading, setLoading] = useState(true);
-  
+
   const router = useRouter();
   const supabase = createClient();
 
-  const fetchDashboardData = useCallback(async () => {
-    try {
-      setLoading(true);
-      
-      // 1. Giriş yapan kullanıcının ID'sini al
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        router.push('/auth/login');
-        return;
-      }
+  useEffect(() => {
+    const fetchDashboardData = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
 
-      // 2. Öğrencinin GERÇEK ismini ve bilgilerini çek
-      const { data: sData, error: sError } = await supabase
-        .from('students')
-        .select('*')
-        .eq('id', user.id)
-        .single();
-      
-      if (sError) {
-        console.error("Öğrenci verisi bulunamadı:", sError);
-      } else {
+        // 1. Profil Bilgisi
+        const { data: sData } = await supabase.from('students').select('*').eq('id', user.id).single();
         setStudent(sData);
+
+        // 2. Üniversite Hedefi
+        const { data: tData } = await supabase.from('student_targets').select('*').eq('student_id', user.id).maybeSingle();
+        setTarget(tData);
+
+        // 3. Deneme Ortalamalarını Hesapla (Banner Analizi İçin)
+        const { data: eData } = await supabase.from('exams').select('total_net, exam_type').eq('student_id', user.id);
+        if (eData) {
+          const tytExams = eData.filter(e => e.exam_type === 'TYT');
+          const aytExams = eData.filter(e => e.exam_type === 'AYT');
+          setAvgs({
+            tyt: tytExams.length > 0 ? Number((tytExams.reduce((acc, curr) => acc + curr.total_net, 0) / tytExams.length).toFixed(1)) : 0,
+            ayt: aytExams.length > 0 ? Number((aytExams.reduce((acc, curr) => acc + curr.total_net, 0) / aytExams.length).toFixed(1)) : 0
+          });
+        }
+
+      } catch (error) {
+        console.error("Veri çekme hatası:", error);
+      } finally {
+        setLoading(false);
       }
-
-      // 3. Haftalık Program Bilgisi
-      const { data: pData } = await supabase
-        .from('weekly_programs')
-        .select('*')
-        .eq('student_id', user.id)
-        .order('week_start_date', { ascending: false })
-        .limit(1)
-        .single();
-      setLatestProgram(pData || null);
-
-      // 4. Haftalık İstatistik Özeti
-      const { data: dData } = await supabase
-        .from('daily_entries')
-        .select('*')
-        .eq('student_id', user.id)
-        .order('entry_date', { ascending: false })
-        .limit(7);
-
-      if (dData && dData.length > 0) {
-        let totalQ = 0;
-        let totalD = 0;
-        
-        dData.forEach(entry => {
-          totalD += (entry.total_duration_minutes || 0);
-          if (entry.subjects_data) {
-            entry.subjects_data.forEach((s: any) => {
-              totalQ += (Number(s.questions) || 0);
-            });
-          }
-        });
-
-        setStats({ 
-          totalQuestions: totalQ, 
-          avgMood: dData[0]?.mood || '😊', 
-          weeklyDuration: totalD 
-        });
-      }
-
-    } catch (error) {
-      console.error("Panel yüklenirken hata:", error);
-    } finally {
-      setLoading(false);
-    }
-  }, [supabase, router]);
-
-  useEffect(() => { fetchDashboardData(); }, [fetchDashboardData]);
+    };
+    fetchDashboardData();
+  }, [supabase]);
 
   if (loading) return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50">
-      <Loader2 className="animate-spin text-blue-600 h-12 w-12 mb-4" />
-      <p className="text-slate-500 font-bold tracking-widest animate-pulse uppercase text-xs">Öğrenci Paneli Hazırlanıyor...</p>
+    <div className="flex h-screen items-center justify-center bg-slate-50 font-black text-blue-600 animate-pulse uppercase tracking-[0.3em]">
+      YÜKLENİYOR...
     </div>
   );
 
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-8 bg-slate-50 min-h-screen text-slate-900 font-sans">
       
-      {/* ÜST PANEL - KARŞILAMA */}
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100">
-        <div className="flex items-center gap-5">
-           <div className="p-4 bg-blue-600 rounded-[1.5rem] text-white shadow-xl shadow-blue-100">
-              <LayoutDashboard size={32} />
-           </div>
-           <div>
-              <h1 className="text-3xl font-black tracking-tight text-slate-900">
-                Öğrenci Paneli
-              </h1>
-              <p className="text-slate-400 font-bold text-xs uppercase tracking-widest mt-1 italic">
-                 Hoş geldin, <span className="text-blue-600">{student?.full_name || "Öğrenci"}</span> 👋
-              </p>
-           </div>
+      {/* HEADER */}
+      <div className="flex flex-col md:flex-row justify-between items-center bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 gap-6">
+        <div className="flex items-center gap-6">
+          <div className="w-20 h-20 bg-blue-600 rounded-[1.8rem] flex items-center justify-center text-white text-3xl font-black shadow-xl shadow-blue-100 uppercase">
+            {student?.full_name?.charAt(0)}
+          </div>
+          <div>
+            <h1 className="text-3xl font-black text-slate-900 tracking-tight leading-none mb-2 italic">
+              Selam, {student?.full_name?.split(' ')[0]}!
+            </h1>
+            <p className="text-slate-400 font-bold text-[10px] uppercase tracking-[0.2em] italic flex items-center gap-2">
+               <GraduationCap size={14} className="text-blue-600" /> {student?.grade_level} Gelişim Paneli
+            </p>
+          </div>
         </div>
 
-        <div className="flex flex-wrap gap-3 w-full lg:w-auto">
-          <Button 
-            onClick={() => router.push('/student/daily')} 
-            className="flex-1 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl h-14 px-8 font-black shadow-xl shadow-blue-100 gap-3 transition-all active:scale-95"
-          >
-            <BookOpen size={20} /> Çalışma Kaydet
-          </Button>
-          <Button 
-            onClick={() => router.push('/student/exam')} 
-            className="flex-1 bg-slate-900 hover:bg-black text-white rounded-2xl h-14 px-8 font-black shadow-xl shadow-slate-100 gap-3 transition-all active:scale-95"
-          >
-            <Trophy size={20} className="text-amber-400" /> Deneme Ekle
-          </Button>
+        <div className="flex items-center gap-4">
+           <NotificationBell />
+           <Button 
+            onClick={() => supabase.auth.signOut().then(() => router.push('/login'))} 
+            variant="outline" 
+            className="rounded-2xl h-14 px-6 font-black text-[10px] uppercase tracking-widest border-slate-200 hover:bg-red-50 hover:text-red-600 transition-all"
+           >
+              <LogOut size={18} className="mr-2" /> Çıkış
+           </Button>
         </div>
       </div>
 
-      {/* HAFTALIK ÖZET KARTLARI */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card className="bg-white border-none shadow-sm rounded-[2rem] p-8 relative overflow-hidden group">
-          <div className="relative z-10">
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2">Haftalık Toplam Soru</p>
-            <div className="flex items-end gap-2">
-              <span className="text-4xl font-black text-slate-900">{stats.totalQuestions}</span>
-              <span className="text-blue-600 font-bold text-xs mb-1">Soru</span>
-            </div>
-          </div>
-          <TrendingUp className="absolute -bottom-4 -right-4 w-24 h-24 text-blue-50 opacity-50 group-hover:scale-110 transition-transform" />
-        </Card>
+      {/* ÜNİVERSİTE HEDEFİ BANNER */}
+      <Card 
+        onClick={() => router.push('/student/target')}
+        className="rounded-[3rem] border-none bg-slate-900 p-8 text-white relative overflow-hidden group cursor-pointer hover:shadow-2xl transition-all duration-500"
+      >
+        <div className="relative z-10 flex flex-col md:flex-row justify-between items-center gap-8">
+           <div className="flex items-center gap-6">
+              <div className={`p-5 rounded-3xl shadow-lg transition-transform group-hover:scale-110 ${target?.program_type === '4-yillik' ? 'bg-blue-600' : 'bg-emerald-600'}`}>
+                <School size={32} />
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em] mb-1 italic">HEDEFLEDİĞİN HAYAT</p>
+                <h2 className="text-2xl font-black tracking-tight uppercase">
+                  {target ? target.university_name : "Üniversite Hedefi Belirle"}
+                </h2>
+                <p className="text-sm font-bold text-slate-400 italic">
+                  {target ? target.department_name : "Hayallerine bir adım atmak için tıkla."}
+                </p>
+              </div>
+           </div>
 
-        <Card className="bg-white border-none shadow-sm rounded-[2rem] p-8 relative overflow-hidden group">
-          <div className="relative z-10">
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2">Haftalık Çalışma</p>
-            <div className="flex items-end gap-2">
-              <span className="text-4xl font-black text-slate-900">{Math.round(stats.weeklyDuration / 60)}</span>
-              <span className="text-emerald-600 font-bold text-xs mb-1">Saat</span>
-            </div>
-          </div>
-          <Clock className="absolute -bottom-4 -right-4 w-24 h-24 text-emerald-50 opacity-50 group-hover:scale-110 transition-transform" />
-        </Card>
-
-        <Card className="bg-white border-none shadow-sm rounded-[2rem] p-8 relative overflow-hidden group">
-          <div className="relative z-10">
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2">Genel Duygu Durumu</p>
-            <div className="flex items-end gap-2">
-              <span className="text-4xl">{stats.avgMood}</span>
-              <span className="text-amber-600 font-bold text-xs mb-1 italic">Pozitif</span>
-            </div>
-          </div>
-          <Smile className="absolute -bottom-4 -right-4 w-24 h-24 text-amber-50 opacity-50 group-hover:scale-110 transition-transform" />
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* SOL: GÜNLÜK PROGRAMIN */}
-        <div className="lg:col-span-2 space-y-6">
-          <h2 className="text-xl font-black flex items-center gap-3 px-2 uppercase tracking-tighter">
-              <Calendar className="text-blue-600" /> Bugün Ne Çalışmalıyım?
-          </h2>
-
-          <Card className="border-none shadow-sm rounded-[2.5rem] overflow-hidden bg-white min-h-[300px]">
-            <CardContent className="p-0">
-              {latestProgram ? (
-                <div className="divide-y divide-slate-50">
-                  {/* Sadece bugünü daha belirgin gösteriyoruz */}
-                  <div className="p-8 bg-blue-50/30 flex items-center justify-between">
-                     <div className="flex items-center gap-5">
-                        <div className="w-16 h-16 bg-blue-600 text-white rounded-3xl flex items-center justify-center font-black text-xl shadow-lg shadow-blue-100">
-                           {format(new Date(), 'dd', { locale: tr })}
-                        </div>
-                        <div>
-                           <h4 className="font-black text-slate-900 uppercase text-sm tracking-widest italic">Bugünkü Hedeflerin</h4>
-                           <p className="text-sm text-slate-500 font-medium mt-1">
-                              Koçun bugün için {latestProgram.program_data[format(new Date(), 'eeee').toLowerCase()]?.length || 0} görev planladı.
-                           </p>
-                        </div>
-                     </div>
-                     <Button variant="outline" className="rounded-2xl h-12 border-blue-200 text-blue-600 font-black text-xs hover:bg-blue-600 hover:text-white transition-all">PROGRAMI İNCELE</Button>
-                  </div>
+           {target && (
+             <div className="flex gap-10">
+                <div className="text-center">
+                   <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-2">TYT BAŞARI</p>
+                   <p className="text-3xl font-black text-blue-400">%{Math.min(Math.round((avgs.tyt / target.target_net_tyt) * 100), 100) || 0}</p>
                 </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-24 text-center">
-                  <div className="w-20 h-20 bg-slate-100 rounded-[2rem] flex items-center justify-center mb-4">
-                    <Calendar size={32} className="text-slate-300" />
+                {target.program_type === '4-yillik' && (
+                  <div className="text-center border-l border-white/10 pl-10">
+                     <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-2">AYT BAŞARI</p>
+                     <p className="text-3xl font-black text-orange-400">%{Math.min(Math.round((avgs.ayt / target.target_net_ayt) * 100), 100) || 0}</p>
                   </div>
-                  <h4 className="text-slate-400 font-black italic">Henüz haftalık programın atanmamış.</h4>
-                  <p className="text-slate-300 text-sm mt-1 uppercase tracking-widest font-bold">Lütfen koçunla iletişime geç!</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* SAĞ: KOÇ NOTU VE MOTİVASYON */}
-        <div className="space-y-6">
-          <h2 className="text-xl font-black flex items-center gap-3 px-2 uppercase tracking-tighter">
-            <MessageSquare className="text-blue-600" /> Koçumun Notu
-          </h2>
-          
-          <Card className="bg-slate-900 rounded-[2.5rem] border-none shadow-2xl p-8 text-white relative overflow-hidden group">
-            <div className="relative z-10">
-               <div className="flex items-center gap-3 mb-6">
-                  <div className="p-3 bg-blue-600 rounded-2xl shadow-xl shadow-blue-900/50">
-                    <CheckCircle2 size={24} />
-                  </div>
-                  <h3 className="font-black text-xl tracking-tight">Motivasyon Mesajı</h3>
-               </div>
-               
-               <p className="text-slate-300 text-sm font-medium italic leading-relaxed mb-8">
-                 "Başarı, her gün tekrarlanan küçük disiplinlerin toplamıdır. Bugün attığın her soru, hayallerine giden bir basamaktır. Harika iş çıkarıyorsun!"
-               </p>
-               
-               <div className="pt-6 border-t border-white/10 flex items-center gap-4">
-                  <div className="w-12 h-12 bg-white/5 rounded-[1rem] flex items-center justify-center font-black text-blue-400">GA</div>
-                  <div>
-                    <p className="text-xs font-black uppercase tracking-widest text-white">Eğitim Koçun</p>
-                    <p className="text-[10px] text-slate-500 font-bold uppercase mt-0.5">Süreç Takipte</p>
-                  </div>
-               </div>
-            </div>
-            {/* Dekoratif efekt */}
-            <div className="absolute top-0 right-0 w-32 h-32 bg-blue-600/10 blur-[60px] rounded-full" />
-          </Card>
-
-          {/* DENEME SINAVI ANALİZ KISAYOLU */}
-          <Card 
-            onClick={() => router.push('/student/exam')}
-            className="bg-white rounded-[2.5rem] border-none shadow-sm p-8 cursor-pointer hover:shadow-xl hover:scale-[1.02] transition-all group border border-slate-50"
-          >
-             <div className="flex justify-between items-start mb-6">
-                <div className="p-4 bg-amber-50 text-amber-500 rounded-3xl group-hover:bg-amber-500 group-hover:text-white transition-colors duration-500">
-                    <Trophy size={28} />
-                </div>
-                <ChevronRight className="text-slate-300 group-hover:text-slate-900 transition-colors" />
+                )}
              </div>
-             <h3 className="font-black text-xl text-slate-900 tracking-tight">Deneme Analizleri</h3>
-             <p className="text-slate-400 text-xs font-bold uppercase tracking-[0.15em] mt-1 leading-relaxed">Sınav sonuçlarını gör ve gelişimini takip et.</p>
-          </Card>
+           )}
+
+           {!target && <Rocket size={40} className="text-white/10 group-hover:text-blue-500 transition-colors" />}
         </div>
+        <div className="absolute -right-10 -bottom-10 w-48 h-48 bg-blue-600/10 blur-[80px] rounded-full" />
+      </Card>
+
+      {/* ANA KISAYOLLAR GRİD */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        
+        {/* 1. DERS PROGRAMIM */}
+        <Card onClick={() => router.push('/student/program')} className="rounded-[3rem] border-none shadow-sm bg-white p-10 cursor-pointer hover:shadow-xl transition-all group relative overflow-hidden">
+           <div className="relative z-10">
+              <div className="p-4 bg-blue-50 text-blue-600 rounded-2xl w-fit mb-6 group-hover:bg-blue-600 group-hover:text-white transition-all">
+                 <Calendar size={32} />
+              </div>
+              <h3 className="text-2xl font-black text-slate-900 mb-2 italic tracking-tight uppercase">Ders Programım</h3>
+              <p className="text-slate-400 font-bold text-sm leading-relaxed">Haftalık görevlerini takip et ve bitir.</p>
+           </div>
+           <ChevronRight className="absolute bottom-10 right-10 text-slate-100 group-hover:text-blue-600 transition-all" size={32} />
+        </Card>
+        {/* 7. Konu Takibim */}
+<Card onClick={() => router.push('/student/curriculum')} className="rounded-[3rem] border-none shadow-sm bg-white p-10 cursor-pointer hover:shadow-xl transition-all group relative overflow-hidden border border-slate-100">
+   <div className="relative z-10">
+      <div className="p-4 bg-orange-50 text-orange-600 rounded-2xl w-fit mb-6 group-hover:bg-orange-600 group-hover:text-white transition-all">
+         <GraduationCap size={32} />
+      </div>
+      <h3 className="text-2xl font-black text-slate-900 mb-2 italic tracking-tight uppercase">Konu Takibi</h3>
+      <p className="text-slate-400 font-bold text-sm leading-relaxed">Müfredatta hangi konuları bitirdin? Kontrol et.</p>
+   </div>
+   <ChevronRight className="absolute bottom-10 right-10 text-slate-100 group-hover:text-orange-600 transition-all" size={32} />
+</Card>
+
+
+        {/* 2. SINAV ANALİZİ */}
+        <Card onClick={() => router.push('/student/exam')} className="rounded-[3rem] border-none shadow-sm bg-white p-10 cursor-pointer hover:shadow-xl transition-all group relative overflow-hidden">
+           <div className="relative z-10">
+              <div className="p-4 bg-orange-50 text-orange-600 rounded-2xl w-fit mb-6 group-hover:bg-orange-600 group-hover:text-white transition-all">
+                 <TrendingUp size={32} />
+              </div>
+              <h3 className="text-2xl font-black text-slate-900 mb-2 italic tracking-tight uppercase">Sınav Analizleri</h3>
+              <p className="text-slate-400 font-bold text-sm leading-relaxed">Net artış grafiklerini ve sonuçları gör.</p>
+           </div>
+           <ChevronRight className="absolute bottom-10 right-10 text-slate-100 group-hover:text-orange-600 transition-all" size={32} />
+        </Card>
+
+        {/* 3. GÜNLÜK RAPOR */}
+        <Card onClick={() => router.push('/student/daily')} className="rounded-[3rem] border-none shadow-sm bg-white p-10 cursor-pointer hover:shadow-xl transition-all group relative overflow-hidden">
+           <div className="relative z-10">
+              <div className="p-4 bg-emerald-50 text-emerald-600 rounded-2xl w-fit mb-6 group-hover:bg-emerald-600 group-hover:text-white transition-all">
+                 <BookOpen size={32} />
+              </div>
+              <h3 className="text-2xl font-black text-slate-900 mb-2 italic tracking-tight uppercase">Günlük Rapor</h3>
+              <p className="text-slate-400 font-bold text-sm leading-relaxed">Bugünkü soru ve sürelerini hemen gir.</p>
+           </div>
+           <ChevronRight className="absolute bottom-10 right-10 text-slate-100 group-hover:text-emerald-600 transition-all" size={32} />
+        </Card>
+
+        {/* 4. POMODORO SAYACI (YENİ) */}
+        <Card onClick={() => router.push('/student/pomodoro')} className="rounded-[3rem] border-none shadow-sm bg-slate-900 p-10 cursor-pointer hover:shadow-xl transition-all group relative overflow-hidden">
+           <div className="relative z-10">
+              <div className="p-4 bg-white/10 text-blue-400 rounded-2xl w-fit mb-6 group-hover:bg-blue-600 group-hover:text-white transition-all backdrop-blur-md">
+                 <Timer size={32} />
+              </div>
+              <h3 className="text-2xl font-black text-white mb-2 italic tracking-tight uppercase">Pomodoro Sayacı</h3>
+              <p className="text-slate-500 font-bold text-sm leading-relaxed">Derin odaklanma ile verimini artır.</p>
+           </div>
+           <ChevronRight className="absolute bottom-10 right-10 text-white/10 group-hover:text-blue-500 transition-all" size={32} />
+        </Card>
+
+        {/* 5. KOÇUMDAN GELENLER (YENİ) */}
+        <Card onClick={() => router.push('/student/resources')} className="rounded-[3rem] border-none shadow-sm bg-white p-10 cursor-pointer hover:shadow-xl transition-all group relative overflow-hidden border border-slate-100">
+           <div className="relative z-10">
+              <div className="p-4 bg-purple-50 text-purple-600 rounded-2xl w-fit mb-6 group-hover:bg-purple-600 group-hover:text-white transition-all">
+                 <FileText size={32} />
+              </div>
+              <h3 className="text-2xl font-black text-slate-900 mb-2 italic tracking-tight uppercase">Kaynak Kütüphanesi</h3>
+              <p className="text-slate-400 font-bold text-sm leading-relaxed">Koçunun paylaştığı PDF ve dökümanlar.</p>
+           </div>
+           <ChevronRight className="absolute bottom-10 right-10 text-slate-100 group-hover:text-purple-600 transition-all" size={32} />
+        </Card>
+
+        {/* 6. MOTİVASYON KARTI */}
+        <div className="rounded-[3rem] bg-gradient-to-br from-blue-600 to-indigo-700 p-10 text-white flex flex-col justify-center relative overflow-hidden shadow-2xl shadow-blue-200">
+           <Sparkles className="text-white/20 mb-4" size={40} />
+           <p className="text-xl font-black italic leading-tight">"Zorluklar, başarıyı değerli kılan basamaklardır."</p>
+           <p className="text-[10px] font-bold uppercase tracking-[0.3em] mt-4 text-blue-200">Günlük Motivasyon</p>
+           <div className="absolute -left-10 -bottom-10 w-32 h-32 bg-white/10 rounded-full blur-2xl" />
+        </div>
+
       </div>
     </div>
   );

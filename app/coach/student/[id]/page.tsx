@@ -1,215 +1,234 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useParams, useRouter } from 'next/navigation';
-import { Card, CardContent } from '@/components/ui/card';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Progress } from "@/components/ui/progress"; 
-import { createClient } from '@/lib/supabase/client';
 import { 
-  ArrowLeft, CheckCircle2, Circle, Calendar, 
-  Loader2, Clock, ChevronRight, LayoutGrid, 
-  Sparkles, MessageSquare, Brain, 
-  AlertTriangle, Info, TrendingUp, Activity, Zap
+  ArrowLeft, TrendingUp, Target, BookOpen, Activity, 
+  MessageCircle, Plus, X, CheckCircle2, Clock, Hash, 
+  Flame, Timer, Calendar as CalendarIcon, TrendingDown
 } from 'lucide-react';
-import { format } from 'date-fns';
-import { tr } from 'date-fns/locale';
+import { createClient } from '@/lib/supabase/client';
+import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 
-// --- ÖĞRENCİ SAYFASIYLA BİREBİR AYNI LİSTE (ID'ler Çok Önemli) ---
-const ALL_SUBJECTS_MASTER = [
-  // LGS
-  { id: 'mat-lgs', name: 'Matematik', icon: '📐', total: 12, level: 'LGS' },
-  { id: 'fen-lgs', name: 'Fen Bilimleri', icon: '🧪', total: 7, level: 'LGS' },
-  { id: 'tur-lgs', name: 'Türkçe', icon: '📝', total: 10, level: 'LGS' },
-  { id: 'ing-lgs', name: 'İngilizce', icon: '🇬🇧', total: 10, level: 'LGS' },
-  { id: 'ink-lgs', name: 'İnkılap', icon: '📜', total: 6, level: 'LGS' },
-  { id: 'din-lgs', name: 'Din Kültürü', icon: '🌙', total: 5, level: 'LGS' },
-  // YKS
-  { id: 'mat-tyt', name: 'TYT Matematik', icon: '📐', total: 16, level: 'YKS' },
-  { id: 'mat-ayt', name: 'AYT Matematik', icon: '📊', total: 8, level: 'YKS' },
-  { id: 'tur-tyt', name: 'TYT Türkçe', icon: '📝', total: 12, level: 'YKS' },
-  { id: 'fiz-tyt', name: 'TYT Fizik', icon: '⚛️', total: 10, level: 'YKS' },
-  { id: 'edebiyat', name: 'AYT Edebiyat', icon: '📚', total: 11, level: 'YKS' }
+// --- MÜFREDAT HAVUZU ---
+const SUBJECTS_POOL = [
+  { id: 'tur-lgs', name: 'LGS Türkçe', icon: '📝', level: 'LGS', majors: ['LGS'], topics: ['Sözcükte Anlam', 'Cümlede Anlam', 'Paragraf', 'Fiilimsiler', 'Cümlenin Ögeleri', 'Yazım Kuralları'] },
+  { id: 'mat-lgs', name: 'LGS Matematik', icon: '📐', level: 'LGS', majors: ['LGS'], topics: ['Çarpanlar ve Katlar', 'Üslü İfadeler', 'Kareköklü İfadeler', 'Olasılık', 'Cebirsel İfadeler'] },
+  { id: 'fen-lgs', name: 'LGS Fen Bilimleri', icon: '🧪', level: 'LGS', majors: ['LGS'], topics: ['Mevsimler', 'DNA ve Genetik Kod', 'Basınç', 'Madde ve Endüstri'] },
+  { id: 'ink-lgs', name: 'LGS İnkılap', icon: '📜', level: 'LGS', majors: ['LGS'], topics: ['Bir Kahraman Doğuyor', 'Milli Uyanış', 'Ya İstiklal Ya Ölüm'] },
+  { id: 'din-lgs', name: 'LGS Din Kültürü', icon: '🌙', level: 'LGS', majors: ['LGS'], topics: ['Kader İnancı', 'Zekat ve Sadaka', 'Din ve Hayat'] },
+  { id: 'mat-tyt', name: 'TYT Matematik', icon: '📐', level: 'YKS', majors: ['SAY', 'EA', 'SOZ'], topics: ['Temel Kavramlar', 'Problemler', 'Fonksiyonlar'] },
+  { id: 'mat-ayt', name: 'AYT Matematik', icon: '📊', level: 'YKS', majors: ['SAY', 'EA'], topics: ['Trigonometri', 'Limit', 'Türev', 'İntegral'] }
 ];
 
-const DAYS = ['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi', 'Pazar'];
-
-export default function CoachStudentDetailPage() {
+export default function StudentDetailPage() {
   const { id } = useParams();
   const router = useRouter();
   const supabase = createClient();
   
-  const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'overview' | 'program' | 'curriculum'>('overview'); 
   const [student, setStudent] = useState<any>(null);
-  const [completedTopics, setCompletedTopics] = useState<any[]>([]);
-  const [weeklyProgram, setWeeklyProgram] = useState<any>(null);
-  const [dailyStats, setDailyStats] = useState<any[]>([]);
-  const [activeDay, setActiveDay] = useState('Pazartesi');
+  const [assignedTasks, setAssignedTasks] = useState<any[]>([]);
+  const [exams, setExams] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [activeStep, setActiveStep] = useState(1);
+
+  // Form State
+  const [selectedSubject, setSelectedSubject] = useState<any>(null);
+  const [selectedTopic, setSelectedTopic] = useState("");
+  const [qCount, setQCount] = useState("50");
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      
-      // 1. Öğrenci Bilgisi
       const { data: sData } = await supabase.from('students').select('*').eq('id', id).single();
+      const { data: tData } = await supabase.from('student_tasks').select('*').eq('student_id', id).order('due_date', { ascending: true });
+      const { data: eData } = await supabase.from('exams').select('*').eq('student_id', id).order('created_at', { ascending: true });
+      
       setStudent(sData);
-
-      // 2. Müfredat Bilgisi (Öğrencinin bitirdiği tüm kayıtlar)
-      const { data: cData, error: cError } = await supabase
-        .from('student_curriculum') 
-        .select('*')
-        .eq('student_id', id); // is_completed filtresini kod içinde yapacağız
-
-      if (cError) throw cError;
-      setCompletedTopics(cData || []);
-
-      // 3. Program ve İstatistikler
-      const { data: pData } = await supabase.from('weekly_programs').select('*').eq('student_id', id).order('created_at', { ascending: false }).limit(1).maybeSingle();
-      setWeeklyProgram(pData);
-
-      const { data: dData } = await supabase.from('daily_reports').select('*').eq('student_id', id).order('date', { ascending: false }).limit(7);
-      setDailyStats(dData || []);
-
-      const today = format(new Date(), 'EEEE', { locale: tr });
-      const matchedDay = DAYS.find(d => d.toLowerCase() === today.toLowerCase());
-      if (matchedDay) setActiveDay(matchedDay);
-
-    } catch (error) {
-      console.error("Veri çekme hatası:", error);
-      toast.error("Veriler senkronize edilemedi.");
-    } finally {
-      setLoading(false);
-    }
+      setAssignedTasks(tData || []);
+      setExams(eData || []);
+    } catch (e) { console.error(e); } finally { setLoading(false); }
   }, [id, supabase]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // Seviyeye Göre Ders Filtreleme
-  const isLGS = ["5", "6", "7", "8"].includes(student?.grade_level);
-  const filteredSubjects = ALL_SUBJECTS_MASTER.filter(s => isLGS ? s.level === 'LGS' : s.level === 'YKS');
+  const filteredSubjects = useMemo(() => {
+    if (!student) return [];
+    if (student.grade_level === "8" || student.major === "LGS") return SUBJECTS_POOL.filter(s => s.level === 'LGS');
+    return SUBJECTS_POOL.filter(s => s.level === 'YKS' && s.majors.includes(student.major));
+  }, [student]);
 
-  if (loading) return <div className="flex h-screen items-center justify-center bg-slate-50 font-black text-blue-600 animate-pulse text-xs tracking-widest uppercase">Veriler Eşitleniyor...</div>;
+  const handleAddTask = async () => {
+    if (!selectedTopic) return toast.error("Konu seçin!");
+    const newTask = { student_id: id, topic_name: `${selectedSubject.name} - ${selectedTopic}`, target_questions: parseInt(qCount), due_date: selectedDate, status: 'pending' };
+    setAssignedTasks(prev => [...prev, newTask]);
+    setIsModalOpen(false);
+    toast.success("Görev planlandı!");
+    try { await supabase.from('student_tasks').insert([newTask]); } catch (err) { console.error(err); }
+  };
 
-  const currentDayTasks = weeklyProgram?.program_data?.[activeDay] || [];
-  const totalQuestions = dailyStats.reduce((acc, curr) => acc + (curr.questionCount || 0), 0);
-  const totalPomo = dailyStats.reduce((acc, curr) => acc + (curr.pomodoroMinutes || 0), 0);
+  const tasksByDate = useMemo(() => {
+    const groups: Record<string, any[]> = {};
+    assignedTasks.forEach(t => {
+      const d = t.due_date || 'Belirsiz';
+      if (!groups[d]) groups[d] = [];
+      groups[d].push(t);
+    });
+    return groups;
+  }, [assignedTasks]);
+
+  const chartData = exams.map((e, i) => ({ name: `D${i + 1}`, net: e.total_net }));
+  const lastNet = exams.length > 0 ? exams[exams.length - 1].total_net : 0;
+  const isUp = exams.length >= 2 ? lastNet >= exams[exams.length - 2].total_net : true;
+
+  if (loading) return <div className="h-screen flex items-center justify-center font-black text-blue-600 animate-pulse text-xs uppercase italic">ANALİZ EDİLİYOR...</div>;
 
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-8 bg-slate-50 min-h-screen text-slate-900 pb-32">
       
       {/* HEADER */}
-      <div className="flex flex-col md:flex-row justify-between items-center bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100 gap-6">
-        <div className="flex items-center gap-6">
-          <Button onClick={() => router.back()} variant="ghost" className="rounded-full w-14 h-14 p-0 bg-slate-50 hover:bg-slate-900 hover:text-white transition-all"><ArrowLeft size={28} /></Button>
-          <div className="text-left">
-            <h1 className="text-3xl font-black italic tracking-tighter uppercase flex items-center gap-2"><Sparkles className="text-blue-600" size={24} /> {student?.full_name}</h1>
-            <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest leading-none mt-1">{student?.grade_level}. Sınıf • {student?.major || 'Genel'}</p>
-          </div>
-        </div>
-        
-        <div className="flex bg-slate-100 p-2 rounded-[2rem] w-full md:w-auto shadow-inner">
-          {['overview', 'program', 'curriculum'].map((tab) => (
-            <button key={tab} onClick={() => setActiveTab(tab as any)} className={`flex-1 md:px-8 py-4 rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-white shadow-lg text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>
-              {tab === 'overview' ? 'Özet' : tab === 'program' ? 'Görevler' : 'Müfredat'}
-            </button>
-          ))}
+      <div className="flex items-center justify-between">
+        <Button onClick={() => router.back()} variant="ghost" className="font-black text-slate-400 uppercase text-[10px] tracking-widest transition-all">
+          <ArrowLeft size={16} className="mr-2" /> Geri Dön
+        </Button>
+        <div className="flex gap-4 italic font-black uppercase text-[10px] tracking-widest text-slate-400">
+           <span className="flex items-center gap-1"><Flame size={14} className="text-orange-500" /> SERİ: 12 GÜN</span>
         </div>
       </div>
 
-      {/* ÖZET SEKME */}
-      {activeTab === 'overview' && (
-        <div className="space-y-8 animate-in fade-in duration-700 text-left">
-           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <Card className="p-8 rounded-[2.5rem] border-none bg-slate-900 text-white shadow-2xl relative overflow-hidden">
-                 <Zap className="absolute -right-4 -top-4 text-white/5" size={140} />
-                 <p className="text-[10px] font-black uppercase tracking-widest opacity-40">Haftalık Soru</p>
-                 <h3 className="text-5xl font-black italic mt-2">{totalQuestions}</h3>
-              </Card>
-              <Card className="p-8 rounded-[2.5rem] border-none bg-white shadow-sm flex flex-col justify-between">
-                 <div>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Haftalık Odaklanma</p>
-                    <h3 className="text-4xl font-black text-slate-900 mt-2">{totalPomo} <span className="text-sm opacity-30 italic font-bold">dk</span></h3>
-                 </div>
-              </Card>
-              <Card className="p-8 rounded-[2.5rem] border-none bg-white shadow-sm flex flex-col justify-between">
-                 <div>
-                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Müfredat İlerlemesi</p>
-                    <h3 className="text-4xl font-black text-slate-900 mt-2">%{Math.round((completedTopics.length / 200) * 100)}</h3>
-                 </div>
-              </Card>
-           </div>
-        </div>
-      )}
+      {/* DASHBOARD */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+         <Card className="p-8 rounded-[2.5rem] border-none shadow-sm bg-white flex flex-col items-center">
+            <div className="p-4 bg-blue-50 rounded-2xl mb-3 text-blue-600"><Hash size={24} /></div>
+            <span className="text-3xl font-black italic">{lastNet}</span>
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Son Net</p>
+         </Card>
+         <Card className="p-8 rounded-[2.5rem] border-none shadow-sm bg-white flex flex-col items-center">
+            <div className="p-4 bg-purple-50 rounded-2xl mb-3 text-purple-600"><Timer size={24} /></div>
+            <span className="text-3xl font-black italic">42 Seans</span>
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Pomodoro</p>
+         </Card>
+         <Card className="p-8 rounded-[2.5rem] border-none shadow-sm bg-white flex flex-col items-center border-b-4 border-blue-600 text-left">
+            <div className="p-4 bg-orange-50 rounded-2xl mb-3 text-orange-600"><Clock size={24} /></div>
+            <span className="text-3xl font-black italic">28s 15dk</span>
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">Çalışma</p>
+         </Card>
+         <Card className="p-8 rounded-[2.5rem] border-none shadow-sm bg-slate-900 text-white flex flex-col items-center">
+            <div className="p-4 bg-white/10 rounded-2xl mb-3 text-blue-400"><Target size={24} /></div>
+            <span className="text-3xl font-black italic">95.0</span>
+            <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mt-1 text-center leading-none">Hedef Net</p>
+         </Card>
+      </div>
 
-      {/* GÖREVLER SEKME */}
-      {activeTab === 'program' && (
-        <div className="space-y-8 animate-in slide-in-from-right-8 duration-500 text-left">
-           <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-              <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-                {DAYS.map((day) => (
-                  <button key={day} onClick={() => setActiveDay(day)} className={`px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all border ${activeDay === day ? "bg-slate-900 text-white border-slate-900 shadow-xl" : "bg-white text-slate-400 border-slate-100"}`}>{day}</button>
-                ))}
-              </div>
-              <Button onClick={() => router.push(`/coach/assign-program/${id}`)} className="bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-black text-[10px] uppercase h-12 px-8 shadow-xl shadow-blue-100">Programı Düzenle</Button>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        
+        {/* SOL: GRAFİK VE AJANDA */}
+        <div className="lg:col-span-2 space-y-8">
+          
+          {/* NET GELİŞİM GRAFİĞİ (GERİ GELDİ!) */}
+          <Card className="p-10 rounded-[3rem] border-none shadow-sm bg-white h-[400px]">
+            <div className="flex items-center justify-between mb-8">
+              <h3 className="text-xl font-black italic uppercase tracking-tighter flex items-center gap-3">
+                <Activity className="text-blue-600" size={24} /> Net Gelişim Analizi
+              </h3>
+              {exams.length > 0 && (
+                <div className={`flex items-center gap-2 font-black italic ${isUp ? 'text-green-500' : 'text-red-500'}`}>
+                  {isUp ? <TrendingUp size={20}/> : <TrendingDown size={20}/>}
+                  <span className="text-sm">SON DURUM: {isUp ? 'YÜKSELİŞ' : 'DÜŞÜŞ'}</span>
+                </div>
+              )}
+            </div>
+            <div className="h-[250px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 900}} dy={10} />
+                  <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 900}} />
+                  <Tooltip contentStyle={{borderRadius: '20px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontWeight: 900}} />
+                  <Line type="monotone" dataKey="net" stroke="#2563eb" strokeWidth={5} dot={{ r: 6, fill: '#2563eb', strokeWidth: 3, stroke: '#fff' }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+
+          {/* AJANDA */}
+          <div className="space-y-6 text-left">
+             <div className="flex items-center justify-between px-4">
+                <h3 className="text-xl font-black italic uppercase tracking-tighter flex items-center gap-3">
+                  <CalendarIcon size={24} className="text-blue-600" /> Günlük Program
+                </h3>
+                <Button onClick={() => {setIsModalOpen(true); setActiveStep(1);}} className="bg-blue-600 hover:bg-slate-900 rounded-[1.5rem] font-black uppercase text-[10px] tracking-widest px-8 h-14 shadow-xl">GÖREV ATA</Button>
+             </div>
+             <div className="space-y-8">
+                {Object.keys(tasksByDate).length > 0 ? Object.keys(tasksByDate).map(date => (
+                  <div key={date} className="space-y-4">
+                     <span className="px-5 py-1.5 bg-slate-900 text-white text-[10px] font-black rounded-full uppercase tracking-widest">{date}</span>
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                       {tasksByDate[date].map((t, i) => (
+                         <Card key={i} className="p-6 rounded-[2rem] border-none shadow-sm bg-white hover:shadow-2xl transition-all">
+                            <h4 className="text-[11px] font-black uppercase text-slate-900 italic mb-2">{t.topic_name}</h4>
+                            <div className="flex items-center gap-3 text-[9px] font-bold uppercase text-slate-400">
+                               <span className="flex items-center gap-1"><Hash size={12}/> {t.target_questions} Soru</span>
+                            </div>
+                         </Card>
+                       ))}
+                     </div>
+                  </div>
+                )) : <div className="text-center py-20 bg-white rounded-[3rem] opacity-30 font-black italic uppercase text-xs">HENÜZ PLAN YAPILMADI</div>}
+             </div>
+          </div>
+        </div>
+
+        {/* SAĞ PANEL: HAFTALIK SORU TRENDİ */}
+        <Card className="p-8 rounded-[3rem] border-none shadow-sm bg-white h-fit sticky top-10">
+           <h3 className="text-lg font-black italic uppercase tracking-tighter mb-8 text-left">Soru Trendi</h3>
+           <div className="h-64 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                 <BarChart data={[{n:'Pt',s:200},{n:'Sa',s:150},{n:'Çş',s:300},{n:'Pş',s:250},{n:'Cu',s:400}]}>
+                    <Bar dataKey="s" fill="#2563eb" radius={[10, 10, 0, 0]} />
+                    <XAxis dataKey="n" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 900}} />
+                 </BarChart>
+              </ResponsiveContainer>
            </div>
-           
-           <div className="grid gap-4">
-              {currentDayTasks.length === 0 ? (
-                <div className="p-24 text-center bg-white rounded-[4rem] border-2 border-dashed border-slate-100 flex flex-col items-center">
-                   <LayoutGrid size={48} className="text-slate-100 mb-4" />
-                   <p className="text-slate-400 font-black italic uppercase text-xs">Bu gün için görev atanmamış</p>
+        </Card>
+      </div>
+
+      {/* MÜFREDAT MODALI */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/95 backdrop-blur-md z-50 flex items-center justify-center p-4">
+           <div className="bg-white w-full max-w-2xl rounded-[3.5rem] shadow-2xl p-12 relative animate-in zoom-in duration-300 flex flex-col text-left">
+              <Button onClick={() => setIsModalOpen(false)} className="absolute top-8 right-8 w-12 h-12 rounded-full bg-slate-50 text-slate-400 hover:bg-slate-900 p-0 shadow-none border-none"><X size={24}/></Button>
+              <h2 className="text-3xl font-black italic uppercase tracking-tighter mb-10 text-slate-900">{activeStep === 1 ? "1. DERS SEÇ" : "2. DETAYLAR"}</h2>
+              {activeStep === 1 ? (
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                   {filteredSubjects.map((sub) => (
+                     <div key={sub.id} onClick={() => {setSelectedSubject(sub); setActiveStep(2);}} className="p-8 bg-slate-50 rounded-[2.5rem] border-2 border-transparent hover:border-blue-600 hover:bg-white cursor-pointer transition-all flex flex-col items-center">
+                        <span className="text-4xl mb-4">{sub.icon}</span>
+                        <span className="text-[11px] font-black uppercase text-slate-900">{sub.name}</span>
+                     </div>
+                   ))}
                 </div>
               ) : (
-                currentDayTasks.map((task: any, idx: number) => (
-                  <Card key={idx} className={`p-8 rounded-[2.5rem] border-none shadow-sm flex items-center justify-between transition-all ${task.completed ? "bg-emerald-50/50" : "bg-white"}`}>
-                    <div className="flex items-center gap-6">
-                       {task.completed ? <CheckCircle2 size={32} className="text-emerald-500" /> : <Circle size={32} className="text-slate-100" />}
-                       <div className="text-left">
-                          <span className="text-[9px] font-black text-blue-500 uppercase tracking-widest px-2 py-1 bg-blue-50 rounded-lg">{task.subject}</span>
-                          <h3 className={`text-xl font-black mt-1 ${task.completed ? "text-slate-300 line-through italic" : "text-slate-900"}`}>{task.title}</h3>
-                       </div>
-                    </div>
-                  </Card>
-                ))
+                <div className="space-y-6">
+                   <div className="grid grid-cols-2 gap-4">
+                      <input type="date" className="h-16 bg-slate-50 rounded-[1.5rem] px-8 font-black" value={selectedDate} onChange={(e)=>setSelectedDate(e.target.value)} />
+                      <select className="h-16 bg-slate-50 rounded-[1.5rem] px-8 font-black text-[10px] uppercase" onChange={(e) => setSelectedTopic(e.target.value)}>
+                        <option value="">KONU SEÇİN...</option>
+                        {selectedSubject?.topics.map((t: string) => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                   </div>
+                   <input type="number" className="w-full h-16 bg-slate-50 rounded-[1.5rem] px-8 font-black text-center" value={qCount} onChange={(e)=>setQCount(e.target.value)} placeholder="Soru Sayısı" />
+                   <Button onClick={handleAddTask} className="w-full h-16 bg-slate-900 hover:bg-blue-600 text-white rounded-[1.8rem] font-black uppercase text-[11px] tracking-[0.2em] shadow-2xl transition-all">GÖREVİ PLANLA</Button>
+                </div>
               )}
            </div>
         </div>
       )}
-
-      {/* MÜFREDAT SEKME (DÜZELTİLEN KISIM) */}
-      {activeTab === 'curriculum' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 animate-in slide-in-from-bottom-6 duration-700 text-left">
-          {filteredSubjects.map((subject) => {
-            // FİLTRELEME MANTIĞI GÜNCELLENDİ: subject_id üzerinden eşleştirme yapar
-            const subCompleted = completedTopics.filter((t: any) => t.subject_id === subject.id).length;
-            const progress = Math.round((subCompleted / subject.total) * 100);
-
-            return (
-              <Card key={subject.id} className="p-8 rounded-[3rem] border-none shadow-sm bg-white hover:shadow-xl transition-all relative overflow-hidden">
-                <div className="flex items-center gap-5 mb-8">
-                  <div className="text-3xl bg-slate-50 w-16 h-16 rounded-[1.5rem] flex items-center justify-center shadow-inner">{subject.icon}</div>
-                  <div>
-                    <h3 className="font-black text-xl text-slate-900 tracking-tighter leading-tight">{subject.name}</h3>
-                    <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">{subject.total} Toplam Ünite</p>
-                  </div>
-                </div>
-                <div className="space-y-6">
-                   <div className="flex justify-between items-end"><span className="text-4xl font-black text-slate-900 tracking-tighter">%{progress}</span></div>
-                   <Progress value={progress} className="h-4 rounded-full bg-slate-50" />
-                   <div className="flex justify-between text-[10px] font-black uppercase text-slate-400 px-1">
-                      <span>Bitirilen: {subCompleted}</span>
-                      <span>Kalan: {subject.total - subCompleted}</span>
-                   </div>
-                   <Button variant="ghost" onClick={() => router.push(`/coach/student/${id}/curriculum/${subject.id}`)} className="w-full rounded-2xl bg-slate-900 text-white hover:bg-blue-600 font-black text-[10px] uppercase py-7">Konu Detaylarını Gör</Button>
-                </div>
-              </Card>
-            );
-          })}
-        </div>
-      )}
-
     </div>
   );
 }

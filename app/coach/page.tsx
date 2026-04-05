@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import {
   Users, Search, UserPlus, LayoutGrid, Zap, AlertTriangle,
   MessageCircle, ChevronRight, Sparkles, TrendingDown,
-  Mail, Phone, Lock
+  Mail, Phone, Lock, Target
 } from 'lucide-react';
 import {
   Dialog,
@@ -27,17 +27,31 @@ import { createClient } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
 
-interface Student { id: string; full_name: string; grade_level: string; major: string; phone: string | null; hasDrop?: boolean; }
-interface Exam { student_id: string; total_net: number; created_at: string; }
+interface Student { 
+  id: string; 
+  full_name: string; 
+  grade_level: string; 
+  major: string; 
+  phone: string | null; 
+  hasDrop?: boolean;
+  hasActivityToday?: boolean;
+}
+
+interface Exam { 
+  student_id: string; 
+  total_net: number; 
+  created_at: string; 
+  exam_type: 'LGS' | 'TYT' | 'AYT'; // Sınav türü ayrımı
+}
 
 export default function CoachPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [allExams, setAllExams] = useState<Exam[]>([]);
+  const [coachName, setCoachName] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  
   const [formData, setFormData] = useState({
     fullName: '', email: '', phone: '', password: '', classLevel: '', branch: ''
   });
@@ -52,20 +66,37 @@ export default function CoachPage() {
       const user = authData?.user;
       if (!user) return;
 
+      const { data: coachProfile } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('id', user.id)
+        .single();
+      
+      if (coachProfile) setCoachName(coachProfile.full_name);
+
       const { data: sData } = await supabase.from('profiles').select('*').eq('coach_id', user.id).eq('role', 'student').order('full_name', { ascending: true });
       const currentStudents = (sData as any[]) || [];
 
       if (currentStudents.length > 0) {
-        const { data: eData } = await supabase.from('exams').select('student_id, total_net, created_at').in('student_id', currentStudents.map(s => s.id)).order('created_at', { ascending: true });
+        const { data: eData } = await supabase.from('exams').select('student_id, total_net, created_at, exam_type').in('student_id', currentStudents.map(s => s.id));
         const exams = (eData as Exam[]) || [];
         setAllExams(exams);
+
         setStudents(currentStudents.map(s => {
-          const sEx = exams.filter(e => e.student_id === s.id);
+          const sEx = exams.filter(e => e.student_id === s.id).sort((a,b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
           const drop = sEx.length >= 2 && Number(sEx[sEx.length - 1].total_net) < Number(sEx[sEx.length - 2].total_net);
-          return { ...s, id: s.id, full_name: s.full_name, grade_level: s.class_level, major: s.branch, phone: s.phone_number, hasDrop: drop };
+          
+          return { 
+            ...s, 
+            id: s.id, 
+            full_name: s.full_name, 
+            grade_level: s.class_level, 
+            major: s.branch, 
+            phone: s.phone_number, 
+            hasDrop: drop,
+            hasActivityToday: Math.random() > 0.7 // Simülasyon
+          };
         }));
-      } else {
-        setStudents([]);
       }
     } catch (e) {
       console.error(e);
@@ -74,9 +105,14 @@ export default function CoachPage() {
     }
   }, [supabase]);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Net Hesaplama Fonksiyonu
+  const getAvgByType = (type: string) => {
+    const filteredExams = allExams.filter(e => e.exam_type === type);
+    if (filteredExams.length === 0) return "0";
+    return (filteredExams.reduce((a, b) => a + (Number(b.total_net) || 0), 0) / filteredExams.length).toFixed(1);
+  };
 
   const handleCreateStudent = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -108,45 +144,35 @@ export default function CoachPage() {
     }
   };
 
-  const openWhatsApp = (e: React.MouseEvent, phone: string | null) => {
-    e.stopPropagation();
-    if (!phone) return toast.error("Numara kayıtlı değil.");
-    const clean = phone.replace(/\D/g, '');
-    const formatted = clean.startsWith('0') ? `90${clean.substring(1)}` : clean.startsWith('90') ? clean : `90${clean}`;
-    window.open(`https://wa.me{formatted}`, '_blank');
-  };
-
-  const avgNet = allExams.length > 0 ? (allExams.reduce((a, b) => a + (Number(b.total_net) || 0), 0) / allExams.length).toFixed(1) : "0";
-  const criticals = students.filter(s => s.hasDrop).length;
+  const criticalStudentsList = students.filter(s => s.hasDrop);
   const filtered = students.filter(s => (s.full_name || "").toLowerCase().includes(searchQuery.toLowerCase()));
 
-  if (loading) return <div className="h-screen flex items-center justify-center font-black text-blue-600 animate-pulse text-xs uppercase italic tracking-widest">Sistem Yükleniyor...</div>;
+  if (loading) return <div className="h-screen flex items-center justify-center font-black text-blue-600 animate-pulse text-xs uppercase italic">Yükleniyor...</div>;
 
   return (
-    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-10 bg-slate-50 min-h-screen text-slate-900 pb-32">
-      
-      {/* Header & Arama */}
-      <div className="flex flex-col lg:flex-row justify-between items-center bg-white p-10 rounded-[3rem] shadow-sm border border-slate-100 gap-6">
-        <div className="flex items-center gap-6">
-          <div className="p-5 bg-slate-900 rounded-[2rem] text-white shadow-xl rotate-3"><LayoutGrid size={32} /></div>
-          <div className="text-left">
-            <h1 className="text-4xl font-black italic tracking-tighter uppercase leading-none">Koç Paneli</h1>
-            <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest mt-1 italic opacity-70">Öğrenci Yönetimi</p>
+    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-8 bg-slate-50 min-h-screen text-slate-900 pb-32">
+      {/* Header */}
+      <div className="flex flex-col lg:flex-row justify-between items-center bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 gap-6">
+        <div className="flex items-center gap-5">
+          <div className="p-4 bg-slate-900 rounded-2xl text-white shadow-lg rotate-3"><LayoutGrid size={28} /></div>
+          <div>
+            <h1 className="text-3xl font-black italic tracking-tighter uppercase leading-none">
+              {coachName || "Koç Paneli"}
+            </h1>
+            <p className="text-slate-400 font-bold text-[9px] uppercase tracking-widest mt-1 italic">Öğrencilerim</p>
           </div>
         </div>
         <div className="flex flex-col sm:flex-row items-center gap-4 w-full lg:w-auto">
-          <div className="relative w-full sm:w-80">
-            <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
-            <input type="text" placeholder="Öğrenci ara..." className="w-full pl-14 pr-8 h-16 bg-slate-50 border-none rounded-[1.5rem] font-bold text-sm shadow-inner outline-none focus:ring-2 ring-blue-500/20" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+          <div className="relative w-full sm:w-72">
+            <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+            <input type="text" placeholder="Öğrenci ara..." className="w-full pl-12 pr-6 h-14 bg-slate-50 border-none rounded-2xl font-bold text-sm outline-none focus:ring-2 ring-blue-500/20" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
           </div>
-          
           <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
             <DialogTrigger asChild>
-              <Button className="bg-blue-600 hover:bg-slate-900 rounded-[1.5rem] font-black px-10 h-16 text-white uppercase tracking-widest text-[11px] shadow-lg shadow-blue-200 transition-all active:scale-95">
-                <UserPlus size={20} className="mr-2" /> Yeni Öğrenci
+              <Button className="bg-blue-600 hover:bg-slate-900 rounded-2xl font-black px-8 h-14 text-white uppercase tracking-widest text-[10px] shadow-lg shadow-blue-100 transition-all">
+                <UserPlus size={18} className="mr-2" /> Yeni Öğrenci
               </Button>
             </DialogTrigger>
-            
             <DialogContent className="sm:max-w-[550px] rounded-[3rem] p-0 overflow-hidden border-none shadow-2xl bg-white">
               <div className="bg-slate-900 p-10 text-white relative overflow-hidden">
                 <div className="absolute top-[-20px] right-[-20px] opacity-10 rotate-12"><UserPlus size={120} /></div>
@@ -227,49 +253,81 @@ export default function CoachPage() {
         </div>
       </div>
 
-      {/* İstatistikler */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-        <Card className="p-8 rounded-[2.5rem] border-none shadow-sm bg-white flex flex-col items-center justify-center text-center">
-          <div className="p-5 bg-blue-50 rounded-[1.2rem] mb-4"><Users className="text-blue-600" size={28} /></div>
-          <h4 className="text-4xl font-black italic text-slate-900 leading-none">{students.length}</h4>
-          <p className="text-[9px] font-black uppercase text-slate-400 tracking-[0.2em] mt-2">Öğrenciler</p>
+      {/* İstatistik Kartları Grid (Dinamik Netler Dahil) */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        {/* Toplam Öğrenci */}
+        <Card className="p-6 rounded-[2rem] border-none shadow-sm bg-white flex flex-col items-center justify-center text-center">
+          <div className="p-3 bg-slate-100 rounded-xl mb-3 text-slate-600"><Users size={20} /></div>
+          <h4 className="text-3xl font-black italic text-slate-900 leading-none">{students.length}</h4>
+          <p className="text-[8px] font-black uppercase text-slate-400 tracking-widest mt-2">Öğrenciler</p>
         </Card>
-        <Card className="p-8 rounded-[2.5rem] border-none shadow-sm bg-white flex flex-col items-center justify-center text-center">
-          <div className="p-5 bg-amber-50 rounded-[1.2rem] mb-4"><Zap className="text-amber-500" size={28} /></div>
-          <h4 className="text-4xl font-black italic text-slate-900 leading-none">{avgNet}</h4>
-          <p className="text-[9px] font-black uppercase text-slate-400 tracking-[0.2em] mt-2">Ort. Net</p>
+
+        {/* LGS ORT */}
+        <Card className="p-6 rounded-[2rem] border-none shadow-sm bg-white flex flex-col items-center justify-center text-center border-b-4 border-orange-400">
+          <div className="p-3 bg-orange-50 rounded-xl mb-3 text-orange-500 font-black text-[10px]">LGS</div>
+          <h4 className="text-3xl font-black italic text-slate-900 leading-none">{getAvgByType('LGS')}</h4>
+          <p className="text-[8px] font-black uppercase text-slate-400 tracking-widest mt-2">Ortalama Puan</p>
         </Card>
-        <Card className="p-8 rounded-[2.5rem] border-none shadow-sm bg-white flex flex-col items-center justify-center text-center">
-          <div className="p-5 bg-red-50 rounded-[1.2rem] mb-4"><AlertTriangle className="text-red-500" size={28} /></div>
-          <h4 className="text-4xl font-black italic text-slate-900 leading-none">{criticals}</h4>
-          <p className="text-[9px] font-black uppercase text-red-500 tracking-[0.2em] mt-2 font-bold">Kritik</p>
+
+        {/* TYT ORT */}
+        <Card className="p-6 rounded-[2rem] border-none shadow-sm bg-white flex flex-col items-center justify-center text-center border-b-4 border-blue-500">
+          <div className="p-3 bg-blue-50 rounded-xl mb-3 text-blue-600 font-black text-[10px]">TYT</div>
+          <h4 className="text-3xl font-black italic text-slate-900 leading-none">{getAvgByType('TYT')}</h4>
+          <p className="text-[8px] font-black uppercase text-slate-400 tracking-widest mt-2">Ortalama Net</p>
         </Card>
-        <Card className="p-8 rounded-[2.5rem] border-none shadow-sm bg-white flex flex-col items-center justify-center text-center">
-          <div className="p-5 bg-purple-50 rounded-[1.2rem] mb-4"><Sparkles className="text-purple-600" size={28} /></div>
-          <h4 className="text-4xl font-black italic text-slate-900 leading-none">Aktif</h4>
-          <p className="text-[9px] font-black uppercase text-slate-400 tracking-[0.2em] mt-2">Sistem</p>
+
+        {/* AYT ORT */}
+        <Card className="p-6 rounded-[2rem] border-none shadow-sm bg-white flex flex-col items-center justify-center text-center border-b-4 border-purple-500">
+          <div className="p-3 bg-purple-50 rounded-xl mb-3 text-purple-600 font-black text-[10px]">AYT</div>
+          <h4 className="text-3xl font-black italic text-slate-900 leading-none">{getAvgByType('AYT')}</h4>
+          <p className="text-[8px] font-black uppercase text-slate-400 tracking-widest mt-2">Ortalama Net</p>
         </Card>
+
+        {/* Kritik Kartı */}
+        <div className="relative group">
+          <Card className="p-6 rounded-[2rem] border-none shadow-sm bg-white flex flex-col items-center justify-center text-center h-full">
+            <div className="p-3 bg-red-50 rounded-xl mb-3 text-red-500"><AlertTriangle size={20} /></div>
+            <h4 className="text-3xl font-black italic text-slate-900 leading-none">{criticalStudentsList.length}</h4>
+            <p className="text-[8px] font-black uppercase text-red-500 tracking-widest mt-2">Kritik</p>
+          </Card>
+          {criticalStudentsList.length > 0 && (
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-4 w-56 bg-slate-900 text-white p-5 rounded-[1.5rem] opacity-0 group-hover:opacity-100 transition-all pointer-events-none z-50">
+              <p className="text-[9px] font-black uppercase text-red-400 mb-2 italic">Düşüşteki Öğrenciler</p>
+              {criticalStudentsList.map(s => <div key={s.id} className="text-[11px] font-bold py-1 border-b border-white/5 last:border-0">{s.full_name}</div>)}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Öğrenci Listesi */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filtered.map((s) => (
-          <Card key={s.id} onClick={() => router.push(`/coach/student/${s.id}`)} className="relative bg-white border-none shadow-sm rounded-[2rem] hover:shadow-2xl transition-all duration-500 overflow-hidden group cursor-pointer border border-transparent hover:border-blue-100">
-            <div className={`h-1.5 w-full ${s.hasDrop ? 'bg-red-500 animate-pulse' : (["11", "12"].includes(s.grade_level) ? 'bg-blue-600' : 'bg-orange-500')}`} />
-            <div className="p-8">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-4 text-left">
-                  <div className="w-14 h-14 bg-slate-900 rounded-2xl flex items-center justify-center font-black text-xl text-white shadow-lg rotate-2 group-hover:rotate-0 transition-transform">{s.full_name.charAt(0)}</div>
+          <Card key={s.id} onClick={() => router.push(`/coach/student/${s.id}`)} className="relative bg-white border-none shadow-sm rounded-[2rem] hover:shadow-xl transition-all duration-300 group cursor-pointer overflow-hidden border border-transparent hover:border-blue-100">
+            <div className={`h-1.5 w-full ${s.hasDrop ? 'bg-red-500' : 'bg-blue-600'}`} />
+            
+            {s.hasActivityToday && (
+              <div className="absolute top-6 right-6">
+                <span className="relative flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-600"></span>
+                </span>
+              </div>
+            )}
+
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-slate-900 rounded-xl flex items-center justify-center font-black text-white">{s.full_name.charAt(0)}</div>
                   <div>
-                    <div className="flex items-center gap-2"><h3 className="text-lg font-black italic text-slate-900 leading-tight tracking-tighter uppercase">{s.full_name}</h3>{s.hasDrop && <TrendingDown size={16} className="text-red-500" />}</div>
-                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">{s.grade_level === 'mezun' ? 'Mezun' : `${s.grade_level}. Sınıf`} • {s.major}</p>
+                    <h3 className="text-md font-black italic text-slate-800 leading-tight uppercase">{s.full_name}</h3>
+                    <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">{s.grade_level}. Sınıf • {s.major}</p>
                   </div>
                 </div>
-                <Button onClick={(e) => openWhatsApp(e, s.phone)} className="w-12 h-12 rounded-2xl bg-green-50 text-green-600 hover:bg-green-600 hover:text-white transition-all p-0 shadow-sm border-none"><MessageCircle size={20} /></Button>
+                <Button onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me{s.phone}`, '_blank'); }} className="w-10 h-10 rounded-xl bg-green-50 text-green-600 hover:bg-green-600 hover:text-white p-0 shadow-none border-none"><MessageCircle size={18} /></Button>
               </div>
               <div className="flex items-center justify-between pt-4 border-t border-slate-50">
-                <span className={`text-[9px] font-black uppercase tracking-tighter italic ${s.hasDrop ? 'text-red-500 font-bold' : 'text-slate-300'}`}>{s.hasDrop ? '⚠ KRİTİK DÜŞÜŞ' : 'Gelişimi İzle'}</span>
-                <div className="flex items-center text-blue-600 font-black text-[9px] uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity"> Profili Gör <ChevronRight size={14} className="ml-1" /></div>
+                <span className={`text-[8px] font-black uppercase italic ${s.hasDrop ? 'text-red-500' : 'text-slate-300'}`}>{s.hasDrop ? '⚠ TAKİP ET' : 'DURUM İYİ'}</span>
+                <ChevronRight size={14} className="text-slate-300 group-hover:text-blue-600 transition-all" />
               </div>
             </div>
           </Card>

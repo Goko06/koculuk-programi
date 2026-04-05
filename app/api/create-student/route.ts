@@ -1,52 +1,64 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 
-export async function POST(req: Request) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl || !supabaseServiceKey) {
-    return NextResponse.json({ 
-      error: "Sunucu anahtarları eksik." 
-    }, { status: 500 });
-  }
-
+export async function POST(request: Request) {
   try {
-    // 1. major alanını request body'den çekiyoruz
-    const { email, password, full_name, coach_id, grade_level, major } = await req.json();
+    const { email, password, fullName, phone, classLevel, branch, coachId } = await request.json();
 
-    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
-      auth: { autoRefreshToken: false, persistSession: false }
-    });
+    // Admin yetkili client (Service Role Key gereklidir)
+    const supabaseAdmin = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      }
+    );
 
-    // 2. Auth kullanıcısını oluştururken metadata'ya alanı da ekleyebiliriz (opsiyonel)
+    // 1. Auth Kullanıcısı Oluştur
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email,
       password,
-      user_metadata: { full_name, major }, 
-      email_confirm: true
+      email_confirm: true,
+      user_metadata: { role: 'student' }
     });
 
-    if (authError) throw authError;
+    if (authError) {
+      console.error("Auth Error:", authError.message);
+      return NextResponse.json({ error: authError.message }, { status: 400 });
+    }
 
-    // 3. 'students' tablosuna 'major' (Alan) bilgisini kaydediyoruz
-    const { error: dbError } = await supabaseAdmin
-      .from('students')
-      .insert({
-        id: authData.user.id,
-        full_name,
-        email,
-        coach_id,
-        grade_level,
-        major, // Buraya dikkat: Supabase tablonuzda 'major' kolonu olmalı
-        tenant_id: '00000000-0000-0000-0000-000000000000'
-      });
+    const studentId = authData.user.id;
 
-    if (dbError) throw dbError;
+    // 2. Profiles Tablosuna Detayları Yaz
+    // HATA ÇÖZÜMÜ: Hem 'id' hem de 'user_id' alanlarına studentId gönderiyoruz.
+    const { error: profileError } = await supabaseAdmin
+      .from('profiles')
+      .insert([
+        {
+          id: studentId,
+          user_id: studentId, // Bu satır hatayı çözer
+          full_name: fullName,
+          phone_number: phone,
+          role: 'student',
+          class_level: classLevel,
+          branch: branch,
+          coach_id: coachId
+        }
+      ]);
+
+    if (profileError) {
+      console.error("Profile DB Error:", profileError.message);
+      // Profil oluşturulamazsa auth kullanıcısını temizlemek iyi bir pratiktir
+      await supabaseAdmin.auth.admin.deleteUser(studentId);
+      return NextResponse.json({ error: profileError.message }, { status: 400 });
+    }
 
     return NextResponse.json({ success: true });
   } catch (error: any) {
-    console.error("Hata Detayı:", error.message);
-    return NextResponse.json({ error: error.message }, { status: 400 });
+    console.error("Server Error:", error.message);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

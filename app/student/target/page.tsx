@@ -1,250 +1,228 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { 
-  School, Target, Rocket, Loader2, 
-  ArrowLeft, GraduationCap, Trophy, 
-  Sparkles, Zap, BarChart3, LayoutGrid // <-- Buraya eklendi
+  Target, 
+  GraduationCap, 
+  School, 
+  ChevronLeft, 
+  Save, 
+  Sparkles,
+  Trophy
 } from 'lucide-react';
-
-import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 
-export default function StudentTargetPage() {
+export default function TargetPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [student, setStudent] = useState<any>(null);
-  const [target, setTarget] = useState<any>(null);
-  const [avgs, setAvgs] = useState({ primary: 0, secondary: 0 }); // LGS için Puan, YKS için TYT/AYT
-  
-  const [formData, setFormData] = useState({ 
-    school_name: '', // Üniversite veya Lise adı
-    sub_title: '',   // Bölüm veya Yüzdelik Dilim
-    program_type: 'lisans', // lisans, onlisans, lgs
-    target_val_1: '', // TYT Net veya LGS Puan
-    target_val_2: ''  // AYT Net (Sadece YKS 4 yıllıkta)
+  const [profile, setProfile] = useState<any>(null);
+  const [target, setTarget] = useState({
+    university_name: '',
+    department_name: '',
+    target_net_tyt: '',
+    target_net_ayt: ''
   });
-  
-  const supabase = createClient();
-  const router = useRouter();
 
-  const fetchData = useCallback(async () => {
+  const router = useRouter();
+  const supabase = createClient();
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          router.push('/login');
+          return;
+        }
+
+        const { data: pData } = await supabase
+          .from('profiles')
+          .select('class_level')
+          .eq('id', user.id)
+          .single();
+        setProfile(pData);
+
+        const { data: tData } = await supabase
+          .from('student_targets')
+          .select('*')
+          .eq('student_id', user.id)
+          .maybeSingle();
+
+        if (tData) {
+          setTarget({
+            university_name: tData.university_name || '',
+            department_name: tData.department_name || '',
+            target_net_tyt: tData.target_net_tyt?.toString() || '',
+            target_net_ayt: tData.target_net_ayt?.toString() || ''
+          });
+        }
+      } catch (error) {
+        console.error('Veri çekme hatası:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [supabase, router]);
+
+  const handleSave = async () => {
+    if (!target.university_name || !target.department_name) {
+      toast.error('Lütfen kurum ve hedef alanlarını doldurun.');
+      return;
+    }
+
+    setSaving(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      // 1. Öğrenci Bilgisi (Sınıf Seviyesi İçin)
-      const { data: sData } = await supabase.from('students').select('*').eq('id', user.id).single();
-      setStudent(sData);
-      const isLGS = ["5", "6", "7", "8"].includes(sData?.grade_level);
+      const classLevel = profile?.class_level?.toString() || "";
+      const isLGS = ["5", "6", "7", "8"].includes(classLevel);
 
-      // 2. Hedef Bilgisi
-      const { data: tData } = await supabase.from('student_targets').select('*').eq('student_id', user.id).maybeSingle();
-      if (tData) {
-        setTarget(tData);
-        setFormData({ 
-          school_name: tData.university_name || '', 
-          sub_title: tData.department_name || '', 
-          program_type: tData.program_type || (isLGS ? 'lgs' : '4-yillik'),
-          target_val_1: tData.target_net_tyt?.toString() || '', 
-          target_val_2: tData.target_net_ayt?.toString() || '' 
-        });
-      } else {
-        // Varsayılan form tipi
-        setFormData(prev => ({ ...prev, program_type: isLGS ? 'lgs' : '4-yillik' }));
-      }
+      // SQL Şemasına Tam Uyum: 'updated_at' kaldırıldı, 'program_type' eklendi.
+      const targetData = {
+        student_id: user.id,
+        university_name: target.university_name,
+        department_name: target.department_name,
+        program_type: isLGS ? 'LGS' : 'YKS',
+        target_net_tyt: parseFloat(target.target_net_tyt) || 0,
+        target_net_ayt: isLGS ? 0 : (parseFloat(target.target_net_ayt) || 0)
+      };
 
-      // 3. Ortalama Verileri (Exams tablosundan)
-      const { data: eData } = await supabase.from('exams').select('total_net, exam_type').eq('student_id', user.id);
-      if (eData) {
-        const primaryExams = eData.filter(e => isLGS ? e.exam_type === 'LGS' : e.exam_type === 'TYT');
-        const secondaryExams = eData.filter(e => e.exam_type === 'AYT');
-        setAvgs({
-          primary: primaryExams.length > 0 ? Number((primaryExams.reduce((acc, curr) => acc + curr.total_net, 0) / primaryExams.length).toFixed(1)) : 0,
-          secondary: secondaryExams.length > 0 ? Number((secondaryExams.reduce((acc, curr) => acc + curr.total_net, 0) / secondaryExams.length).toFixed(1)) : 0
-        });
-      }
-    } catch (error) { console.error(error); } finally { setLoading(false); }
-  }, [supabase]);
+      const { error } = await supabase
+        .from('student_targets')
+        .upsert(targetData, { onConflict: 'student_id' });
 
-  useEffect(() => { fetchData(); }, [fetchData]);
-
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      const { error } = await supabase.from('student_targets').upsert({
-        student_id: user?.id,
-        university_name: formData.school_name,
-        department_name: formData.sub_title,
-        program_type: formData.program_type,
-        target_net_tyt: parseFloat(formData.target_val_1),
-        target_net_ayt: formData.program_type === '4-yillik' ? parseFloat(formData.target_val_2) : null
-      });
       if (error) throw error;
-      toast.success("Hedeflerin başarıyla güncellendi! 🎯");
-      fetchData(); // Veriyi tazele
-    } catch (error: any) { toast.error("Hata: " + error.message); } finally { setSaving(false); }
+      
+      toast.success('Hedeflerin başarıyla güncellendi!');
+    } catch (error: any) {
+      console.error('Kaydetme hatası:', error);
+      toast.error(`Hata: ${error.message || 'Alanları kontrol edin.'}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
-  if (loading) return <div className="flex h-screen items-center justify-center bg-white font-black text-blue-600 animate-pulse text-xs uppercase tracking-widest">Hedefler Yükleniyor...</div>;
+  if (loading) return (
+    <div className="h-screen flex items-center justify-center bg-white italic font-black text-blue-600 animate-pulse uppercase tracking-[0.3em]">
+      YÜKLENİYOR...
+    </div>
+  );
 
-  const isLGS = ["5", "6", "7", "8"].includes(student?.grade_level);
+  const classLevel = profile?.class_level?.toString() || "";
+  const isLGS = ["5", "6", "7", "8"].includes(classLevel);
+  const TargetIcon = isLGS ? School : GraduationCap;
 
   return (
-    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-10 bg-slate-50 min-h-screen text-slate-900 pb-32">
-      
-      {/* HEADER */}
-      <div className="flex justify-between items-center bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100 gap-4">
-        <div className="flex items-center gap-6 text-left">
-          <Button onClick={() => router.back()} variant="ghost" className="rounded-full w-14 h-14 p-0 bg-slate-50 hover:bg-slate-900 hover:text-white transition-all"><ArrowLeft size={24} /></Button>
-          <div>
-            <h1 className="text-3xl font-black italic tracking-tighter uppercase">{isLGS ? 'Lise Hedefim' : 'Üniversite Hedefim'}</h1>
-            <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest leading-none mt-1">Gelecek Planlaması & Analiz</p>
+    <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-8 bg-[#FDFDFD] min-h-screen pb-24 text-slate-900">
+      <div className="flex items-center justify-between">
+        <Button 
+          variant="ghost" 
+          onClick={() => router.back()}
+          className="rounded-2xl font-black text-[10px] uppercase tracking-widest text-slate-400 hover:text-blue-600"
+        >
+          <ChevronLeft size={18} className="mr-1" /> Geri Dön
+        </Button>
+        <div className="px-4 py-2 bg-white border border-slate-100 rounded-2xl shadow-sm flex items-center gap-2">
+          <Trophy size={16} className="text-blue-600" />
+          <span className="text-[10px] font-black uppercase tracking-widest italic text-slate-600">Hedef Ayarları</span>
+        </div>
+      </div>
+
+      <div className="text-center space-y-4">
+        <div className={`w-24 h-24 mx-auto rounded-[2.8rem] flex items-center justify-center shadow-2xl transition-transform hover:scale-105 duration-500 ${isLGS ? 'bg-emerald-600 shadow-emerald-100' : 'bg-blue-600 shadow-blue-100'}`}>
+          <TargetIcon size={48} className="text-white" />
+        </div>
+        <div>
+          <h1 className="text-4xl font-black tracking-tighter uppercase italic text-slate-900">
+            {isLGS ? 'Hedeflediğin Lise' : 'Hedeflediğin Üniversite'}
+          </h1>
+          <p className="text-slate-400 font-bold italic mt-2 uppercase text-[11px] tracking-widest opacity-60">Geleceğini Şekillendir</p>
+        </div>
+      </div>
+
+      <Card className="rounded-[4rem] border-none shadow-2xl p-10 md:p-16 bg-white relative overflow-hidden">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-12 relative z-10">
+          <div className="space-y-8">
+            <div className="space-y-3">
+              <Label className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2 italic flex items-center gap-2">
+                <Target size={14} className="text-blue-500" /> 
+                {isLGS ? 'LİSE ADI' : 'ÜNİVERSİTE ADI'}
+              </Label>
+              <Input 
+                value={target.university_name}
+                onChange={(e) => setTarget({...target, university_name: e.target.value})}
+                placeholder={isLGS ? "Örn: Kabataş Erkek" : "Örn: ODTÜ"}
+                className="h-16 rounded-[1.5rem] border-slate-100 bg-slate-50 font-bold focus:ring-2 focus:ring-blue-600 shadow-inner text-slate-800"
+              />
+            </div>
+            <div className="space-y-3">
+              <Label className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2 italic flex items-center gap-2">
+                <Sparkles size={14} className="text-orange-500" />
+                {isLGS ? 'HEDEF PUAN / YÜZDELİK' : 'HEDEF BÖLÜM'}
+              </Label>
+              <Input 
+                value={target.department_name}
+                onChange={(e) => setTarget({...target, department_name: e.target.value})}
+                placeholder={isLGS ? "Örn: 490 Puan" : "Örn: Tıp Fakültesi"}
+                className="h-16 rounded-[1.5rem] border-slate-100 bg-slate-50 font-bold focus:ring-2 focus:ring-blue-600 shadow-inner text-slate-800"
+              />
+            </div>
+          </div>
+          <div className="space-y-8">
+            <div className="space-y-3">
+              <Label className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2 italic flex items-center gap-2">
+                <TargetIcon size={14} className="text-emerald-500" />
+                {isLGS ? 'TOPLAM NET HEDEFİ' : 'TYT NET HEDEFİ'}
+              </Label>
+              <Input 
+                type="number"
+                value={target.target_net_tyt}
+                onChange={(e) => setTarget({...target, target_net_tyt: e.target.value})}
+                placeholder={isLGS ? "90 soru üzerinden" : "120 soru üzerinden"}
+                className="h-16 rounded-[1.5rem] border-slate-100 bg-slate-50 font-bold focus:ring-2 focus:ring-blue-600 shadow-inner text-slate-800"
+              />
+            </div>
+            {!isLGS && (
+              <div className="space-y-3">
+                <Label className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2 italic flex items-center gap-2">
+                  <GraduationCap size={14} className="text-purple-500" />
+                  AYT NET HEDEFİ
+                </Label>
+                <Input 
+                  type="number"
+                  value={target.target_net_ayt}
+                  onChange={(e) => setTarget({...target, target_net_ayt: e.target.value})}
+                  placeholder="80 soru üzerinden"
+                  className="h-16 rounded-[1.5rem] border-slate-100 bg-slate-50 font-bold focus:ring-2 focus:ring-blue-600 shadow-inner text-slate-800"
+                />
+              </div>
+            )}
           </div>
         </div>
-        <div className="p-5 bg-blue-600 rounded-[1.5rem] text-white shadow-xl rotate-3"><Target size={28} /></div>
-      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
-        
-        {/* SOL: MEVCUT DURUM / HEDEF KARTI */}
-        <div className="lg:col-span-7 space-y-8">
-          {target ? (
-            <Card className="rounded-[3.5rem] border-none shadow-2xl bg-slate-900 p-12 text-white relative overflow-hidden text-left">
-                <div className="relative z-10">
-                   <div className="flex justify-between items-start mb-12">
-                      <div>
-                        <span className="px-5 py-2 rounded-2xl text-[10px] font-black uppercase tracking-widest bg-blue-600/30 text-blue-400 border border-blue-600/20">
-                          {isLGS ? 'LGS Hedefi' : (target.program_type === '4-yillik' ? 'Lisans / 4 Yıllık' : 'Önlisans / 2 Yıllık')}
-                        </span>
-                        <h2 className="text-5xl font-black tracking-tighter text-white mt-6 leading-tight italic uppercase">{target.university_name}</h2>
-                        <p className="text-xl font-bold text-slate-400 mt-2">{target.department_name}</p>
-                      </div>
-                      <School size={64} className="text-white/5 absolute -right-4 -top-4" />
-                   </div>
-
-                   <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-                      {/* BİRİNCİL DEĞER (Puan veya TYT) */}
-                      <div className="space-y-5">
-                         <div className="flex justify-between items-end">
-                            <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest">{isLGS ? 'LGS Puan Durumu' : 'TYT Net Durumu'}</p>
-                            <p className="text-sm font-black text-white">{avgs.primary} / {target.target_net_tyt}</p>
-                         </div>
-                         <div className="w-full bg-white/5 h-5 rounded-full p-1 border border-white/5">
-                            <div className="h-full bg-blue-500 rounded-full transition-all duration-1000 shadow-[0_0_20px_rgba(59,130,246,0.5)]" style={{ width: `${Math.min((avgs.primary / target.target_net_tyt) * 100, 100)}%` }} />
-                         </div>
-                      </div>
-
-                      {/* İKİNCİL DEĞER (Sadece YKS 4 Yıllık) */}
-                      {!isLGS && target.program_type === '4-yillik' && (
-                        <div className="space-y-5">
-                           <div className="flex justify-between items-end">
-                              <p className="text-[10px] font-black text-orange-400 uppercase tracking-widest">AYT Net Durumu</p>
-                              <p className="text-sm font-black text-white">{avgs.secondary} / {target.target_net_ayt}</p>
-                           </div>
-                           <div className="w-full bg-white/5 h-5 rounded-full p-1 border border-white/5">
-                              <div className="h-full bg-orange-500 rounded-full transition-all duration-1000 shadow-[0_0_20px_rgba(249,115,22,0.5)]" style={{ width: `${Math.min((avgs.secondary / target.target_net_ayt) * 100, 100)}%` }} />
-                           </div>
-                        </div>
-                      )}
-                   </div>
-                </div>
-                <div className="absolute -bottom-20 -left-20 w-80 h-80 bg-blue-600/10 blur-[120px] rounded-full" />
-            </Card>
-          ) : (
-            <div className="h-full flex flex-col items-center justify-center p-12 bg-white rounded-[3rem] border-2 border-dashed border-slate-200">
-               <Rocket className="text-slate-200 mb-6" size={80} />
-               <h3 className="text-xl font-black uppercase italic text-slate-400">Henüz Hedef Belirlenmedi</h3>
-            </div>
-          )}
+        <div className="mt-16 flex justify-center">
+          <Button 
+            disabled={saving}
+            onClick={handleSave}
+            className={`h-20 px-16 rounded-[2.5rem] font-black text-[11px] uppercase tracking-[0.3em] shadow-2xl hover:scale-105 active:scale-95 border-none text-white italic ${isLGS ? 'bg-emerald-600 shadow-emerald-200' : 'bg-blue-600 shadow-blue-200'}`}
+          >
+            {saving ? 'İŞLENİYOR...' : (
+              <span className="flex items-center gap-3">
+                <Save size={20} /> Hedefimi Kaydet
+              </span>
+            )}
+          </Button>
         </div>
-
-        {/* SAĞ: HEDEF DÜZENLEME FORMU */}
-        <div className="lg:col-span-5">
-           <Card className="rounded-[3rem] border-none shadow-sm bg-white p-10 text-left">
-              <div className="flex items-center gap-3 mb-10">
-                 <div className="p-3 bg-slate-900 rounded-2xl text-white"><LayoutGrid size={20} /></div>
-                 <h3 className="font-black text-xl uppercase tracking-tighter italic">Hedefi Güncelle</h3>
-              </div>
-
-              <form onSubmit={handleSave} className="space-y-6">
-                <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">{isLGS ? 'Hedef Lise Adı' : 'Hedef Üniversite'}</Label>
-                  <Input 
-                    value={formData.school_name} 
-                    onChange={(e) => setFormData({...formData, school_name: e.target.value})} 
-                    placeholder={isLGS ? "Örn: Ankara Atatürk Fen Lisesi" : "Örn: Boğaziçi Üniversitesi"}
-                    className="rounded-2xl border-slate-100 h-14 font-bold focus:ring-blue-600"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">{isLGS ? 'Hedef Yüzdelik Dilim' : 'Hedef Bölüm'}</Label>
-                  <Input 
-                    value={formData.sub_title} 
-                    onChange={(e) => setFormData({...formData, sub_title: e.target.value})} 
-                    placeholder={isLGS ? "Örn: %0.05" : "Örn: Bilgisayar Mühendisliği"}
-                    className="rounded-2xl border-slate-100 h-14 font-bold"
-                  />
-                </div>
-
-                {!isLGS && (
-                  <div className="space-y-2">
-                    <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Program Tipi</Label>
-                    <select 
-                      value={formData.program_type}
-                      onChange={(e) => setFormData({...formData, program_type: e.target.value})}
-                      className="w-full h-14 rounded-2xl border border-slate-100 bg-white px-4 font-bold text-sm"
-                    >
-                      <option value="4-yillik">Lisans (4 Yıllık)</option>
-                      <option value="2-yillik">Önlisans (2 Yıllık)</option>
-                    </select>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">{isLGS ? 'Hedef Puan' : 'TYT Net Hedefi'}</Label>
-                    <Input 
-                      type="number"
-                      value={formData.target_val_1} 
-                      onChange={(e) => setFormData({...formData, target_val_1: e.target.value})} 
-                      placeholder={isLGS ? "500" : "100"}
-                      className="rounded-2xl border-slate-100 h-14 font-bold text-center"
-                    />
-                  </div>
-                  {!isLGS && formData.program_type === '4-yillik' && (
-                    <div className="space-y-2">
-                      <Label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">AYT Net Hedefi</Label>
-                      <Input 
-                        type="number"
-                        value={formData.target_val_2} 
-                        onChange={(e) => setFormData({...formData, target_val_2: e.target.value})} 
-                        placeholder="70"
-                        className="rounded-2xl border-slate-100 h-14 font-bold text-center"
-                      />
-                    </div>
-                  )}
-                </div>
-
-                <Button 
-                  disabled={saving} 
-                  className="w-full rounded-2xl h-16 bg-blue-600 hover:bg-slate-900 text-white font-black uppercase tracking-widest transition-all shadow-lg"
-                >
-                  {saving ? <Loader2 className="animate-spin mr-2" /> : <Zap className="mr-2" size={18} />}
-                  Hedefi Kaydet
-                </Button>
-              </form>
-           </Card>
-        </div>
-      </div>
+      </Card>
     </div>
   );
 }

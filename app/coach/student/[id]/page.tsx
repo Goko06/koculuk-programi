@@ -1,19 +1,33 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
-  ArrowLeft, TrendingUp, Target, BookOpen, Activity,
-  Plus, X, CheckCircle2, Clock, Hash,
-  Flame, Timer, Calendar as CalendarIcon, TrendingDown, ChevronRight
+  TrendingUp, TrendingDown, Calendar, Target, CheckCircle2, 
+  Clock, ChevronLeft, Plus, BookOpen, MessageCircle, 
+  AlertCircle, Sparkles, ClipboardList, Send, Trash2
 } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { createClient } from '@/lib/supabase/client';
-import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 
-// --- TÜM MÜFREDAT HAVUZU (EKSİKSİZ) ---
+// --- ENTEGRE EDİLMİŞ DEV MÜFREDAT HAVUZU ---
 const CURRICULUM_POOL: any = {
   "5": {
     "Türkçe": ["Sözcükte Anlam", "Cümlede Anlam", "Parçada Anlam", "Yazım Kuralları", "Noktalama İşaretleri", "Metin Türleri", "Söz Sanatları"],
@@ -106,253 +120,330 @@ export default function StudentDetailPage() {
   const supabase = createClient();
 
   const [student, setStudent] = useState<any>(null);
-  const [assignedTasks, setAssignedTasks] = useState<any[]>([]);
   const [exams, setExams] = useState<any[]>([]);
+  const [tasks, setTasks] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // Modal Seçim State'leri
-  const [selectedCourse, setSelectedCourse] = useState("");
-  const [selectedTopic, setSelectedTopic] = useState("");
-  const [qCount, setQCount] = useState("50");
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  // Görev Formu State
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [taskForm, setTaskForm] = useState({
+    subject: '',
+    topic: '',
+    targetQuestions: '',
+    dueDate: ''
+  });
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const { data: sData } = await supabase.from('students').select('*').eq('id', id).single();
-      const { data: tData } = await supabase.from('student_tasks').select('*').eq('student_id', id).order('due_date', { ascending: true });
-      const { data: eData } = await supabase.from('exams').select('*').eq('student_id', id).order('created_at', { ascending: true });
-
+      const { data: sData } = await supabase.from('profiles').select('*').eq('id', id).single();
       setStudent(sData);
-      setAssignedTasks(tData || []);
+
+      const { data: eData } = await supabase.from('exams').select('*').eq('student_id', id).order('exam_date', { ascending: false });
       setExams(eData || []);
-    } catch (e) {
-      console.error(e);
+
+      const { data: tData } = await supabase.from('student_tasks').select('*').eq('student_id', id).order('created_at', { ascending: false });
+      setTasks(tData || []);
+    } catch (error) {
+      console.error(error);
     } finally {
       setLoading(false);
     }
   }, [id, supabase]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
-  // --- HİBRİT MÜFREDAT OLUŞTURUCU (BOZMADAN) ---
-  const activeCurriculum = useMemo(() => {
+  // Sınıf ve Branşa göre müfredat filtreleme motoru
+  const getAvailableCurriculum = () => {
     if (!student) return {};
-    const level = String(student.grade_level);
-    const major = student.major;
+    const level = student.class_level;
+    const branch = student.branch;
 
-    // YKS GRUBU (12 ve Mezun) -> TYT CORE + BRANŞ AYT
-    if (level === "12" || level === "Mezun") {
-      let combined = { ...CURRICULUM_POOL["TYT_CORE"] };
-      if (major === "SAY") Object.assign(combined, CURRICULUM_POOL["AYT_SAY"]);
-      if (major === "EA") Object.assign(combined, CURRICULUM_POOL["AYT_EA"]);
-      return combined;
+    // 5-11. Sınıf Arası Filtreleme
+    if (["5", "6", "7", "8", "9", "10", "11"].includes(level)) {
+      return CURRICULUM_POOL[level] || {};
     }
 
-    // ARA SINIFLAR VE LGS
-    return CURRICULUM_POOL[level] || {};
-  }, [student]);
+    // 12 ve Mezunlar İçin Filtreleme
+    if (level === '12' || level === 'mezun') {
+      const tyt = CURRICULUM_POOL["TYT_CORE"];
+      let ayt = {};
+      if (branch === 'Sayısal') ayt = CURRICULUM_POOL["AYT_SAY"];
+      if (branch === 'Eşit Ağırlık') ayt = CURRICULUM_POOL["AYT_EA"];
+      // Sözel için ek kısımlar buraya eklenebilir.
+      return { ...tyt, ...ayt };
+    }
 
-  const availableCourses = useMemo(() => Object.keys(activeCurriculum), [activeCurriculum]);
-  const availableTopics = useMemo(() => selectedCourse ? activeCurriculum[selectedCourse] || [] : [], [selectedCourse, activeCurriculum]);
+    return {};
+  };
 
-  const handleAddTask = async () => {
-    if (!selectedTopic) return toast.error("Konu seçin!");
-    const newTask = {
-      student_id: id,
-      topic_name: `${selectedCourse} - ${selectedTopic}`,
-      target_questions: parseInt(qCount),
-      due_date: selectedDate,
-      status: 'pending'
-    };
+  const handleCreateTask = async (e: React.FormEvent) => {
+    e.preventDefault();
     try {
-      await supabase.from('student_tasks').insert([newTask]);
-      toast.success("Görev Sisteme İşlendi!");
-      setIsModalOpen(false);
-      fetchData(); // Listeyi tazele
-    } catch (err) {
-      toast.error("Hata!");
+      const { error } = await supabase.from('student_tasks').insert([{
+        student_id: id,
+        topic_name: `${taskForm.subject} - ${taskForm.topic}`,
+        target_questions: parseInt(taskForm.targetQuestions),
+        due_date: taskForm.dueDate,
+        status: 'pending'
+      }]);
+
+      if (error) throw error;
+      toast.success("Ödev başarıyla atandı!");
+      setIsTaskModalOpen(false);
+      setTaskForm({ subject: '', topic: '', targetQuestions: '', dueDate: '' });
+      fetchData();
+    } catch (error: any) {
+      toast.error(error.message);
     }
   };
 
-  const tasksByDate = useMemo(() => {
-    const groups: Record<string, any[]> = {};
-    assignedTasks.forEach(t => {
-      const d = t.due_date || 'Belirsiz';
-      if (!groups[d]) groups[d] = [];
-      groups[d].push(t);
-    });
-    return groups;
-  }, [assignedTasks]);
+  const deleteTask = async (taskId: string) => {
+    const { error } = await supabase.from('student_tasks').delete().eq('id', taskId);
+    if (error) toast.error("Hata oluştu");
+    else {
+      toast.success("Görev silindi");
+      fetchData();
+    }
+  };
 
-  const chartData = exams.map((e, i) => ({ name: `D${i + 1}`, net: e.total_net }));
-  const lastNet = exams.length > 0 ? exams[exams.length - 1].total_net : 0;
-  const isUp = exams.length >= 2 ? lastNet >= exams[exams.length - 2].total_net : true;
+  if (loading) return <div className="h-screen flex items-center justify-center font-black text-blue-600 animate-pulse uppercase italic tracking-[0.3em]">Analiz Ediliyor...</div>;
 
-  if (loading) return <div className="h-screen flex items-center justify-center font-black text-blue-600 animate-pulse text-xs uppercase italic tracking-widest"> ANALİZ MERKEZİ YÜKLENİYOR...</div>;
+  const currentCurriculum = getAvailableCurriculum();
 
   return (
-    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-8 bg-slate-50 min-h-screen text-slate-900 pb-32">
-      {/* HEADER */}
-      <div className="flex items-center justify-between">
-        <Button onClick={() => router.back()} variant="ghost" className="font-black text-slate-400 uppercase text-[10px] tracking-widest">
-          <ArrowLeft size={16} className="mr-2" /> Geri Dön
-        </Button>
-        <div className="flex gap-4 italic font-black uppercase text-[10px] tracking-widest text-slate-400">
-          <span className="flex items-center gap-1 text-slate-900 bg-white px-4 py-2 rounded-full shadow-sm">
-            <BookOpen size={14} className="text-blue-600" /> {student?.grade_level}. SINIF • {student?.major}
-          </span>
+    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-8 bg-slate-50 min-h-screen pb-20 text-slate-900">
+      
+      {/* Üst Profil Barı */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100">
+        <div className="flex items-center gap-6">
+          <Button onClick={() => router.back()} variant="ghost" className="rounded-2xl h-14 w-14 bg-slate-50 hover:bg-slate-900 hover:text-white transition-all">
+            <ChevronLeft size={24} />
+          </Button>
+          <div>
+            <h1 className="text-3xl font-black italic uppercase tracking-tighter leading-none">{student?.full_name}</h1>
+            <div className="flex items-center gap-2 mt-2">
+               <span className="text-blue-600 font-black text-[10px] uppercase bg-blue-50 px-3 py-1 rounded-full">{student?.class_level}. SINIF</span>
+               <span className="text-slate-400 font-bold text-[10px] uppercase tracking-widest italic">{student?.branch}</span>
+            </div>
+          </div>
         </div>
-      </div>
 
-      {/* DASHBOARD İSTATİSTİKLER (ORİJİNAL) */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card className="p-8 rounded-[2.5rem] border-none shadow-sm bg-white flex flex-col items-center">
-          <div className="p-4 bg-blue-50 rounded-2xl mb-3 text-blue-600"><Hash size={24} /></div>
-          <span className="text-3xl font-black italic">{lastNet}</span>
-          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1"> Son Net</p>
-        </Card>
-        <Card className="p-8 rounded-[2.5rem] border-none shadow-sm bg-white flex flex-col items-center border-b-4 border-orange-500">
-          <div className="p-4 bg-orange-50 rounded-2xl mb-3 text-orange-600"><Clock size={24} /></div>
-          <span className="text-3xl font-black italic"> {assignedTasks.length}</span>
-          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1"> Aktif Görev</p>
-        </Card>
-        <Card className="p-8 rounded-[2.5rem] border-none shadow-sm bg-white flex flex-col items-center">
-          <div className="p-4 bg-purple-50 rounded-2xl mb-3 text-purple-600"><Timer size={24} /></div>
-          <span className="text-3xl font-black italic"> %65</span>
-          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1"> Tamamlama</p>
-        </Card>
-        <Card className="p-8 rounded-[2.5rem] border-none shadow-sm bg-slate-900 text-white flex flex-col items-center">
-          <div className="p-4 bg-white/10 rounded-2xl mb-3 text-blue-400"><Target size={24} /></div>
-          <span className="text-3xl font-black italic"> 95.0</span>
-          <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mt-1"> Hedef Net</p>
-        </Card>
+        <div className="flex gap-3 w-full md:w-auto">
+          {/* ÖDEV MODALI */}
+          <Dialog open={isTaskModalOpen} onOpenChange={setIsTaskModalOpen}>
+            <DialogTrigger asChild>
+              <Button className="flex-1 md:flex-none bg-blue-600 hover:bg-slate-900 text-white rounded-2xl h-14 px-8 font-black uppercase tracking-widest text-[10px] shadow-lg shadow-blue-100 transition-all active:scale-95">
+                <Plus size={18} className="mr-2" /> Yeni Görev Tanımla
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-[550px] rounded-[3rem] p-0 overflow-hidden border-none shadow-2xl bg-white">
+              <div className="bg-slate-900 p-10 text-white relative overflow-hidden">
+                <div className="absolute top-[-20px] right-[-20px] opacity-10 rotate-12"><ClipboardList size={120} /></div>
+                <DialogHeader>
+                  <DialogTitle className="text-3xl font-black italic uppercase tracking-tighter flex items-center gap-3">
+                    <Sparkles className="text-blue-400" /> Görevlendir
+                  </DialogTitle>
+                  <p className="text-slate-400 text-[10px] font-bold uppercase tracking-[0.2em] mt-1">Müfredat Bazlı Ödev Ataması</p>
+                </DialogHeader>
+              </div>
+
+              <form onSubmit={handleCreateTask} className="p-10 space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase text-slate-400 ml-1 tracking-widest italic">Ders Seçimi</label>
+                    <Select onValueChange={(val) => setTaskForm({...taskForm, subject: val, topic: ''})}>
+                      <SelectTrigger className="h-14 rounded-2xl bg-slate-50 border-none font-bold">
+                        <SelectValue placeholder="Ders Seçin" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-white rounded-2xl shadow-2xl border-slate-100">
+                        {Object.keys(currentCurriculum).map(ders => (
+                          <SelectItem key={ders} value={ders} className="font-bold py-3">{ders}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase text-slate-400 ml-1 tracking-widest italic">Konu Seçimi</label>
+                    <Select disabled={!taskForm.subject} onValueChange={(val) => setTaskForm({...taskForm, topic: val})}>
+                      <SelectTrigger className="h-14 rounded-2xl bg-slate-50 border-none font-bold disabled:opacity-40">
+                        <SelectValue placeholder="Konu Seçin" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-white rounded-2xl shadow-2xl border-slate-100">
+                        {taskForm.subject && currentCurriculum[taskForm.subject]?.map((konu: string) => (
+                          <SelectItem key={konu} value={konu} className="font-bold py-3">{konu}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase text-slate-400 ml-1 tracking-widest italic">Soru Hedefi</label>
+                    <div className="relative">
+                       <Target className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
+                       <Input type="number" placeholder="Örn: 150" required className="h-14 pl-12 rounded-2xl bg-slate-50 border-none font-bold" value={taskForm.targetQuestions} onChange={e => setTaskForm({...taskForm, targetQuestions: e.target.value})} />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase text-slate-400 ml-1 tracking-widest italic">Son Tarih</label>
+                    <div className="relative">
+                       <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
+                       <Input type="date" required className="h-14 pl-12 rounded-2xl bg-slate-50 border-none font-bold" value={taskForm.dueDate} onChange={e => setTaskForm({...taskForm, dueDate: e.target.value})} />
+                    </div>
+                  </div>
+                </div>
+
+                <Button type="submit" className="w-full h-16 bg-blue-600 hover:bg-slate-900 rounded-[1.5rem] font-black uppercase tracking-[0.2em] text-xs shadow-xl shadow-blue-100 transition-all">
+                  Ödevi Sisteme İşle <Send size={16} className="ml-2" />
+                </Button>
+              </form>
+            </DialogContent>
+          </Dialog>
+
+          <Button variant="outline" className="flex-1 md:flex-none rounded-2xl h-14 px-8 border-2 border-slate-100 font-black uppercase tracking-widest text-[10px] hover:bg-slate-50">
+            <MessageCircle size={18} className="mr-2" /> İletişim
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* AKTİF GÖREVLER LİSTESİ */}
         <div className="lg:col-span-2 space-y-8">
-          {/* NET GRAFİĞİ (ORİJİNAL) */}
-          <Card className="p-10 rounded-[3rem] border-none shadow-sm bg-white h-[400px]">
+          <Card className="p-8 rounded-[2.5rem] border-none shadow-sm bg-white">
             <div className="flex items-center justify-between mb-8">
-              <h3 className="text-xl font-black italic uppercase tracking-tighter flex items-center gap-3">
-                <Activity className="text-blue-600" size={24} /> Akademik Gelişim
-              </h3>
-              <div className={`flex items-center gap-2 font-black italic ${isUp ? 'text-green-500' : 'text-red-500'}`}>
-                {isUp ? <TrendingUp size={20} /> : <TrendingDown size={20} />}
-                <span className="text-xs uppercase"> TREND</span>
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><Target size={20} /></div>
+                <h2 className="text-xl font-black italic uppercase tracking-tighter">Haftalık Görevler</h2>
               </div>
+              <span className="text-[10px] font-black bg-blue-50 text-blue-600 px-4 py-2 rounded-full uppercase italic tracking-widest">{tasks.length} Aktif</span>
             </div>
-            <div className="h-[250px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 900 }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 900 }} />
-                  <Tooltip contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontWeight: 900 }} />
-                  <Line type="monotone" dataKey="net" stroke="#2563eb" strokeWidth={5} dot={{ r: 6, fill: '#2563eb', strokeWidth: 3, stroke: '#fff' }} />
-                </LineChart>
-              </ResponsiveContainer>
+            
+            <div className="space-y-4">
+              {tasks.length > 0 ? tasks.map((task) => (
+                <div key={task.id} className="group flex items-center justify-between p-6 bg-slate-50 rounded-[2rem] border border-transparent hover:border-blue-100 hover:bg-white transition-all">
+                  <div className="flex items-center gap-5">
+                    <div className={`p-4 rounded-2xl ${task.status === 'completed' ? 'bg-green-100 text-green-600 shadow-green-50' : 'bg-amber-100 text-amber-600 shadow-amber-50'} shadow-lg`}>
+                      {task.status === 'completed' ? <CheckCircle2 size={24} /> : <Clock size={24} />}
+                    </div>
+                    <div>
+                      <h4 className="font-black text-slate-900 uppercase italic tracking-tighter text-md">{task.topic_name}</h4>
+                      <div className="flex items-center gap-3 mt-1">
+                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Hedef: {task.target_questions} Soru</p>
+                         <div className="w-1 h-1 bg-slate-300 rounded-full" />
+                         <p className="text-[10px] font-bold text-red-400 uppercase tracking-widest">Teslim: {new Date(task.due_date).toLocaleDateString('tr-TR')}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <Button onClick={() => deleteTask(task.id)} variant="ghost" className="h-12 w-12 rounded-xl text-red-400 hover:bg-red-50 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-all">
+                    <Trash2 size={20} />
+                  </Button>
+                </div>
+              )) : (
+                <div className="text-center py-20 bg-slate-50/50 rounded-[2rem] border-2 border-dashed border-slate-100">
+                  <BookOpen size={48} className="mx-auto mb-4 text-slate-200" />
+                  <p className="font-black uppercase text-[10px] italic tracking-widest text-slate-400">Henüz bir ödev ataması yapılmadı</p>
+                </div>
+              )}
             </div>
           </Card>
 
-          {/* PROGRAM LİSTESİ */}
-          <div className="space-y-6 text-left">
-            <div className="flex items-center justify-between px-4">
-              <h3 className="text-xl font-black italic uppercase tracking-tighter flex items-center gap-3">
-                <CalendarIcon size={24} className="text-blue-600" /> Günlük Program
-              </h3>
-              <Button onClick={() => setIsModalOpen(true)} className="bg-blue-600 hover:bg-slate-900 rounded-[1.5rem] font-black uppercase text-[10px] tracking-widest px-8 h-14 shadow-xl shadow-blue-100 transition-all"> GÖREV ATA</Button>
-            </div>
-            <div className="space-y-8">
-              {Object.keys(tasksByDate).map(date => (
-                <div key={date} className="space-y-4">
-                  <span className="px-5 py-1.5 bg-slate-900 text-white text-[10px] font-black rounded-full uppercase tracking-widest">{date}</span>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {tasksByDate[date].map((t, i) => (
-                      <Card key={i} className="p-6 rounded-[2rem] border-none shadow-sm bg-white">
-                        <h4 className="text-[11px] font-black uppercase italic mb-2 text-slate-800">{t.topic_name}</h4>
-                        <div className="flex items-center gap-3 text-[9px] font-bold uppercase text-slate-400">
-                          <span className="flex items-center gap-1"><Hash size={12} /> {t.target_questions} Soru Hedefi</span>
-                        </div>
-                      </Card>
-                    ))}
+          {/* DENEME ANALİZLERİ */}
+          <Card className="p-8 rounded-[2.5rem] border-none shadow-sm bg-white">
+             <div className="flex items-center gap-3 mb-8">
+                <div className="p-3 bg-purple-50 text-purple-600 rounded-xl"><Sparkles size={20} /></div>
+                <h2 className="text-xl font-black italic uppercase tracking-tighter">Deneme Analizleri</h2>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {exams.map((exam) => (
+                  <div key={exam.id} className="flex items-center justify-between p-6 bg-slate-50 rounded-[1.5rem] border border-slate-100 group hover:border-purple-200 transition-all">
+                    <div>
+                      <h4 className="font-black text-slate-900 uppercase italic tracking-tighter text-sm">{exam.exam_name}</h4>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase mt-1 tracking-tighter">{new Date(exam.exam_date).toLocaleDateString('tr-TR')} • {exam.exam_type}</p>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-2xl font-black italic text-blue-600 leading-none group-hover:text-purple-600 transition-colors">{exam.total_net}</span>
+                      <p className="text-[9px] font-black uppercase text-slate-300 tracking-tighter mt-1 italic">Net</p>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          </div>
+                ))}
+              </div>
+          </Card>
         </div>
 
-        {/* SAĞ PANEL (ORİJİNAL) */}
-        <Card className="p-8 rounded-[3rem] border-none shadow-sm bg-white h-fit sticky top-10">
-          <h3 className="text-lg font-black italic uppercase tracking-tighter mb-8 text-left"> Soru Trendi</h3>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={[{ n: 'Pt', s: 200 }, { n: 'Sa', s: 150 }, { n: 'Çş', s: 300 }, { n: 'Pş', s: 250 }, { n: 'Cu', s: 400 }]}>
-                <Bar dataKey="s" fill="#2563eb" radius={[10, 10, 0, 0]} />
-                <XAxis dataKey="n" axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 900 }} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-      </div>
+        
+        {/* SAĞ PANEL: ÖZET VE NOTLAR */}
+        <div className="space-y-8">
+           {/* Gelişim Kartı */}
+           <Card className="p-8 rounded-[2.5rem] border-none shadow-sm bg-slate-900 text-white relative overflow-hidden group">
+             <div className="absolute top-0 right-0 p-8 opacity-10 rotate-12 group-hover:rotate-0 transition-transform duration-700">
+                <TrendingUp size={120} />
+             </div>
+             <p className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-400 italic mb-2">Akademik Performans</p>
+             <h3 className="text-4xl font-black italic uppercase tracking-tighter leading-none mb-6">
+                {tasks.length > 0 && (tasks.filter(t => t.status === 'completed').length / tasks.length) > 0.7 ? 'Mükemmel' : 'Gelişiyor'}
+             </h3>
+             
+             <div className="space-y-4 relative z-10">
+               <div className="flex justify-between items-center py-4 border-b border-white/10">
+                 <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest italic">Ödev Tamamlama</span>
+                 <span className="font-black italic text-lg">
+                    %{tasks.length > 0 ? ((tasks.filter(t => t.status === 'completed').length / tasks.length) * 100).toFixed(0) : 0}
+                 </span>
+               </div>
+               <div className="flex justify-between items-center py-4 border-b border-white/10">
+                 <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest italic">Ortalama Net</span>
+                 <span className="font-black italic text-lg text-blue-400">
+                    {exams.length > 0 ? (exams.reduce((acc, curr) => acc + Number(curr.total_net), 0) / exams.length).toFixed(1) : 0}
+                 </span>
+               </div>
+               <div className="flex justify-between items-center py-4">
+                 <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest italic">Sistem Kaydı</span>
+                 <span className="font-black italic text-slate-500 text-xs">
+                    {new Date(student?.created_at).toLocaleDateString('tr-TR')}
+                 </span>
+               </div>
+             </div>
+           </Card>
 
-      {/* --- AKILLI GÖREV MODALI (TYT + AYT BİRLEŞİK) --- */}
-      {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/95 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-[3.5rem] shadow-2xl p-12 relative z-10 animate-in zoom-in duration-300 border-none">
-            <Button onClick={() => setIsModalOpen(false)} className="absolute top-8 right-8 w-12 h-12 rounded-full bg-slate-50 text-slate-400 hover:bg-slate-900 hover:text-white transition-all p-0 border-none shadow-sm"><X size={24} /></Button>
-            
-            <h2 className="text-3xl font-black italic uppercase tracking-tighter mb-10 text-slate-900 text-left leading-none tracking-[-0.05em]">GÖREV TANIMLA</h2>
-            
-            <div className="space-y-6 text-left">
-              {/* DERS */}
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4 mb-2 block italic opacity-70">1. DERS SEÇİMİ</label>
-                <select 
-                  className="w-full h-16 bg-slate-50 rounded-[1.5rem] px-8 font-black text-[11px] uppercase outline-none border-2 border-transparent focus:border-blue-600 transition-all text-slate-900"
-                  value={selectedCourse}
-                  onChange={(e) => { setSelectedCourse(e.target.value); setSelectedTopic(""); }}
-                >
-                  <option value="">DERS SEÇİNİZ...</option>
-                  {availableCourses.map(course => <option key={course} value={course}>{course}</option>)}
-                </select>
+           {/* Koç Notu Kartı */}
+           <Card className="p-8 rounded-[2.5rem] border-none shadow-sm bg-white border border-slate-100">
+             <div className="flex items-center gap-3 mb-6">
+                <div className="p-3 bg-red-50 text-red-600 rounded-xl"><AlertCircle size={20} /></div>
+                <h2 className="text-lg font-black italic uppercase tracking-tighter">Koçun Değerlendirmesi</h2>
               </div>
-
-              {/* KONU */}
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4 mb-2 block italic opacity-70">2. KONU SEÇİMİ</label>
-                <select 
-                  disabled={!selectedCourse}
-                  className="w-full h-16 bg-slate-50 rounded-[1.5rem] px-8 font-black text-[11px] uppercase outline-none border-2 border-transparent focus:border-blue-600 transition-all disabled:opacity-30 text-slate-900"
-                  value={selectedTopic}
-                  onChange={(e) => setSelectedTopic(e.target.value)}
-                >
-                  <option value="">KONU SEÇİNİZ...</option>
-                  {availableTopics.map((t: string) => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </div>
-
-              {/* TARİH VE SORU */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4 mb-2 block italic opacity-70">BİTİŞ TARİHİ</label>
-                  <input type="date" className="w-full h-16 bg-slate-50 rounded-[1.5rem] px-6 font-black text-xs outline-none text-slate-900" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
-                </div>
-                <div>
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4 mb-2 block italic opacity-70">SORU HEDEFİ</label>
-                  <input type="number" className="w-full h-16 bg-slate-50 rounded-[1.5rem] px-6 font-black text-center text-lg outline-none text-slate-900" value={qCount} onChange={(e) => setQCount(e.target.value)} />
-                </div>
-              </div>
-
-              <Button onClick={handleAddTask} className="w-full h-20 bg-slate-900 hover:bg-blue-600 text-white rounded-[2rem] font-black uppercase text-[12px] tracking-[0.3em] shadow-2xl transition-all duration-300 mt-4 shadow-blue-100 active:scale-95">
-                GÖREVİ SİSTEME İŞLE
+              <textarea 
+                className="w-full h-40 bg-slate-50 border-none rounded-3xl p-6 text-sm font-bold placeholder:text-slate-300 focus:ring-2 ring-blue-500/20 outline-none resize-none transition-all"
+                placeholder="Öğrencinin bu haftaki performansı, eksikleri ve motivasyon durumu hakkında notlar alın..."
+                defaultValue={student?.notes || ""}
+              ></textarea>
+              <Button 
+                onClick={async () => {
+                  const noteValue = (document.querySelector('textarea') as HTMLTextAreaElement).value;
+                  const { error } = await supabase.from('profiles').update({ notes: noteValue }).eq('id', id);
+                  if (error) toast.error("Not kaydedilemedi");
+                  else toast.success("Koç notu güncellendi");
+                }}
+                className="w-full mt-4 bg-slate-900 hover:bg-blue-600 text-white rounded-2xl h-14 font-black uppercase tracking-widest text-[10px] shadow-xl shadow-slate-200 transition-all active:scale-95"
+              >
+                Değerlendirmeyi Kaydet
               </Button>
-            </div>
-          </div>
+           </Card>
+
+           {/* Hızlı Erişim Kartı */}
+           <Card className="p-6 rounded-[2rem] border-none shadow-sm bg-blue-50/50 border border-blue-100/50">
+              <p className="text-[9px] font-black uppercase text-blue-600 tracking-widest mb-4 text-center italic">Hızlı İşlemler</p>
+              <div className="grid grid-cols-2 gap-3">
+                 <Button variant="ghost" className="h-12 bg-white rounded-xl font-bold text-[10px] uppercase hover:bg-blue-600 hover:text-white transition-all shadow-sm">Program Yaz</Button>
+                 <Button variant="ghost" className="h-12 bg-white rounded-xl font-bold text-[10px] uppercase hover:bg-blue-600 hover:text-white transition-all shadow-sm">Veli Arandı</Button>
+              </div>
+           </Card>
         </div>
-      )}
+      </div>
     </div>
   );
 }

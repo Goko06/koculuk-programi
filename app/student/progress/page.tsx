@@ -4,195 +4,213 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { createClient } from '@/lib/supabase/client';
-import { 
-  Trophy, Calendar, Activity, 
-  ArrowLeft, Zap, Target, 
-  BarChart3, Sparkles, TrendingUp,
-  Clock, CheckCircle2, ChevronRight
+import {
+  Trophy, Calendar, Activity, ArrowLeft, Zap, Target,
+  BarChart3, Sparkles, TrendingUp, Clock, CheckCircle2,
+  ChevronRight, BookOpen, Brain, BookMarked, Medal
 } from 'lucide-react';
-import { format } from 'date-fns';
+import { format, differenceInDays } from 'date-fns';
 import { tr } from 'date-fns/locale';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { 
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, 
-  Tooltip, ResponsiveContainer, ResponsiveContainer as ReContainer 
+import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer
 } from 'recharts';
 
+const MOTIVATION_QUOTES = [
+  "Başarı, her gün tekrarlanan küçük çabaların toplamıdır.",
+  "Zorluklar, yeteneklerinizi ortaya çıkaran fırsatlardır.",
+  "Gelecek, bugün hazırlananlara aittir.",
+  "Düşle, inan ve gerçekleştir. Sınır sensin!",
+  "Yorulunca dinlenmeyi öğren, bırakmayı değil.",
+  "Bugünkü acın, yarınki gücün olacak.",
+  "En büyük zafer, hiç düşmemek değil, her düştüğünde kalkabilmektir."
+];
+
 export default function ProgressPage() {
-  const [student, setStudent] = useState<any>(null);
+  const [profile, setProfile] = useState<any>(null);
   const [examEntries, setExamEntries] = useState<any[]>([]);
   const [dailyEntries, setDailyEntries] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeQuote, setActiveQuote] = useState("");
   
   const supabase = createClient();
   const router = useRouter();
+
+  useEffect(() => {
+    const lastQuoteDate = localStorage.getItem('last_quote_date');
+    const savedQuote = localStorage.getItem('active_quote');
+    const today = new Date();
+    if (!lastQuoteDate || !savedQuote || differenceInDays(today, new Date(lastQuoteDate)) >= 3) {
+      const newQuote = MOTIVATION_QUOTES[Math.floor(Math.random() * MOTIVATION_QUOTES.length)];
+      setActiveQuote(newQuote);
+      localStorage.setItem('active_quote', newQuote);
+      localStorage.setItem('last_quote_date', today.toISOString());
+    } else { setActiveQuote(savedQuote); }
+  }, []);
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-
-      const { data: sData } = await supabase.from('students').select('*').eq('id', user.id).single();
-      setStudent(sData);
-
-      const { data: daily } = await supabase.from('daily_entries').select('*').eq('student_id', user.id).order('entry_date', { ascending: false }).limit(14);
+      const { data: pData } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+      setProfile(pData);
       const { data: exams } = await supabase.from('exams').select('*').eq('student_id', user.id).order('exam_date', { ascending: true });
-
-      setDailyEntries(daily || []);
       setExamEntries(exams || []);
-    } catch (error) {
-      toast.error("Veriler yüklenemedi.");
-    } finally {
-      setLoading(false);
-    }
+      const { data: entries } = await supabase.from('daily_entries').select('*').eq('student_id', user.id).order('entry_date', { ascending: false });
+      setDailyEntries(entries || []);
+    } catch (error) { console.error(error); } finally { setLoading(false); }
   }, [supabase]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const isLGS = ["5", "6", "7", "8"].includes(student?.grade_level);
-  
-  // Veri Filtreleme
+  const stats = useMemo(() => {
+    let totalQ = 0; let totalBookPages = 0; let totalMinutes = 0; let lastBookName = "";
+    dailyEntries.forEach(entry => {
+      totalMinutes += (Number(entry.total_duration_minutes) || 0);
+      let data = entry.subjects_data;
+      if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { data = {}; } }
+      if (data) {
+        if (data.book?.pages) {
+          totalBookPages += (parseInt(data.book.pages) || 0);
+          if (!lastBookName) lastBookName = data.book.name;
+        }
+        if (data.studies && Array.isArray(data.studies)) {
+          data.studies.forEach((s: any) => { totalQ += (parseInt(s.solved) || 0); });
+        }
+      }
+    });
+    const goalStep = 1000;
+    const currentLevel = Math.floor(totalBookPages / goalStep) + 1;
+    const progressInLevel = totalBookPages % goalStep;
+    const progressPercent = (progressInLevel / goalStep) * 100;
+    return { totalQ, totalBookPages, totalHours: (totalMinutes / 60).toFixed(1), currentLevel, progressPercent, lastBookName };
+  }, [dailyEntries]);
+
+  // Sınav Türlerine Göre Filtreleme
   const tytExams = useMemo(() => examEntries.filter(e => e.exam_type === 'TYT'), [examEntries]);
   const aytExams = useMemo(() => examEntries.filter(e => e.exam_type === 'AYT'), [examEntries]);
   const lgsExams = useMemo(() => examEntries.filter(e => e.exam_type === 'LGS'), [examEntries]);
 
-  const getAvg = (list: any[]) => list.length > 0 
-    ? (list.reduce((acc, curr) => acc + curr.total_net, 0) / list.length).toFixed(1) 
-    : "0";
+  const isLGS = ["5", "6", "7", "8"].includes(profile?.class_level?.toString());
 
-  if (loading) return <div className="h-screen flex items-center justify-center font-black text-blue-600 animate-pulse uppercase tracking-widest text-xs">Veriler Analiz Ediliyor...</div>;
+  if (loading) return <div className="h-screen flex items-center justify-center bg-white font-black animate-pulse text-blue-600 italic">ANALİZLER HESAPLANIYOR...</div>;
 
   // Grafik Bileşeni
-  const RenderChart = ({ data, color, title }: { data: any[], color: string, title: string }) => (
-    <div className="h-[300px] w-full mt-4">
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data}>
-          <defs>
-            <linearGradient id={`color${title}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor={color} stopOpacity={0.3}/>
-              <stop offset="95%" stopColor={color} stopOpacity={0}/>
-            </linearGradient>
-          </defs>
-          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-          <XAxis 
-            dataKey="exam_date" 
-            tickFormatter={(str) => format(new Date(str), 'd MMM', { locale: tr })}
-            fontSize={10} fontWeight="bold" stroke="#94a3b8"
-          />
-          <YAxis fontSize={10} fontWeight="bold" stroke="#94a3b8" axisLine={false} tickLine={false} />
-          <Tooltip 
-            contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-            labelFormatter={(val) => format(new Date(val), 'd MMMM yyyy', { locale: tr })}
-          />
-          <Area type="monotone" dataKey="total_net" stroke={color} strokeWidth={4} fillOpacity={1} fill={`url(#color${title})`} />
-        </AreaChart>
-      </ResponsiveContainer>
-    </div>
+  const CustomChart = ({ data, color, title, gradientId }: any) => (
+    <Card className="p-8 rounded-[3.5rem] bg-white border border-slate-100 shadow-sm relative overflow-hidden mb-8">
+      <h2 className="text-xl font-black uppercase italic tracking-tight text-slate-800 flex items-center gap-3 mb-6">
+        <Zap className={color === '#2563eb' ? 'text-blue-500' : 'text-orange-500'} /> {title} Gelişimi
+      </h2>
+      <div className="h-[300px] w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={data}>
+            <defs>
+              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor={color} stopOpacity={0.3}/>
+                <stop offset="95%" stopColor={color} stopOpacity={0}/>
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+            <XAxis dataKey="exam_date" tickFormatter={(str) => format(new Date(str), 'd MMM', { locale: tr })} fontSize={10} fontWeight="bold" stroke="#94a3b8" />
+            <YAxis fontSize={10} fontWeight="bold" stroke="#94a3b8" axisLine={false} tickLine={false} />
+            <Tooltip contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} labelFormatter={(val) => format(new Date(val), 'd MMMM', { locale: tr })} />
+            <Area type="monotone" dataKey="total_net" stroke={color} strokeWidth={5} fill={`url(#${gradientId})`} fillOpacity={1} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </Card>
   );
 
   return (
-    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-8 bg-slate-50 min-h-screen text-slate-900 pb-32 font-sans">
+    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-8 bg-[#FAFAFB] min-h-screen pb-32 font-sans text-slate-900">
       
-      {/* HEADER & ÖZET KARTLARI */}
-      <div className="flex flex-col lg:flex-row justify-between items-center bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100 gap-6">
+      {/* ÜST PANEL */}
+      <div className="flex flex-col lg:flex-row justify-between items-center bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100 gap-8">
         <div className="flex items-center gap-6 w-full">
-          <Button onClick={() => router.back()} variant="ghost" className="rounded-full w-14 h-14 p-0 bg-slate-50 hover:bg-slate-900 hover:text-white transition-all">
-            <ArrowLeft size={24} />
-          </Button>
+          <Button onClick={() => router.back()} variant="ghost" className="rounded-full w-14 h-14 p-0 bg-slate-50 hover:bg-slate-900 hover:text-white transition-all"><ArrowLeft size={24} /></Button>
           <div>
-            <h1 className="text-4xl font-black italic tracking-tighter uppercase flex items-center gap-3">
-               <TrendingUp className="text-blue-600" /> Analiz Merkezi
-            </h1>
-            <p className="text-slate-400 font-bold text-[10px] uppercase tracking-[0.2em] mt-1">Performans ve Gelişim Takibi</p>
+            <h1 className="text-2xl font-black italic tracking-tighter uppercase flex items-center gap-3"><TrendingUp className="text-blue-600" /> Gelişim Analizi</h1>
+            <p className="text-slate-400 font-bold text-[10px] uppercase tracking-[0.2em] italic">{profile?.full_name} • {profile?.class_level}. Sınıf</p>
           </div>
         </div>
-        
-        <div className="flex gap-4 w-full lg:w-auto">
-          {isLGS ? (
-            <div className="flex-1 bg-orange-500 text-white p-6 px-10 rounded-[2.5rem] text-center min-w-[220px] shadow-xl shadow-orange-100">
-              <p className="text-[10px] font-black uppercase opacity-70 tracking-widest">LGS Puan Ortalaması</p>
-              <h3 className="text-4xl font-black italic mt-1">{getAvg(lgsExams)}</h3>
-            </div>
-          ) : (
-            <>
-              <div className="flex-1 bg-blue-600 text-white p-6 px-8 rounded-[2.5rem] text-center min-w-[140px] shadow-xl shadow-blue-100">
-                <p className="text-[10px] font-black uppercase opacity-70 tracking-widest">TYT Net Ort.</p>
-                <h3 className="text-3xl font-black italic mt-1">{getAvg(tytExams)}</h3>
-              </div>
-              <div className="flex-1 bg-slate-900 text-white p-6 px-8 rounded-[2.5rem] text-center min-w-[140px] shadow-xl shadow-slate-200">
-                <p className="text-[10px] font-black uppercase opacity-70 tracking-widest">AYT Net Ort.</p>
-                <h3 className="text-3xl font-black italic mt-1">{getAvg(aytExams)}</h3>
-              </div>
-            </>
-          )}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 w-full lg:w-auto">
+          <div className="bg-slate-900 text-white p-5 rounded-[2rem] text-center shadow-xl shadow-slate-200 min-w-[130px]">
+            <p className="text-[8px] font-black uppercase opacity-50 mb-1 italic tracking-widest leading-none">Toplam Soru</p>
+            <h3 className="text-3xl font-black italic tracking-tighter tabular-nums">{stats.totalQ}</h3>
+          </div>
+          <div className="bg-blue-600 text-white p-5 rounded-[2rem] text-center shadow-xl shadow-blue-100 min-w-[130px]">
+            <p className="text-[8px] font-black uppercase opacity-70 mb-1 italic tracking-widest leading-none">Okuma (S)</p>
+            <h3 className="text-3xl font-black italic tracking-tighter tabular-nums">{stats.totalBookPages}</h3>
+          </div>
+          <div className="bg-emerald-500 text-white p-5 rounded-[2rem] text-center shadow-xl shadow-emerald-100 min-w-[130px]">
+            <p className="text-[8px] font-black uppercase opacity-70 mb-1 italic tracking-widest leading-none">Odak (Saat)</p>
+            <h3 className="text-3xl font-black italic tracking-tighter tabular-nums">{stats.totalHours}</h3>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
-        {/* SOL: GRAFİKLER */}
-        <div className="lg:col-span-8 space-y-8">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <div className="lg:col-span-8 space-y-0">
+          
+          {/* DINAMIK GRAFIKLER */}
           {isLGS ? (
-            <Card className="p-8 rounded-[3rem] border-none shadow-sm bg-white">
-              <h2 className="text-2xl font-black uppercase italic tracking-tight text-orange-500 flex items-center gap-3 mb-6">
-                <Trophy /> LGS Puan Gelişimi
-              </h2>
-              {lgsExams.length > 0 ? <RenderChart data={lgsExams} color="#f97316" title="LGS" /> : <EmptyState />}
-            </Card>
+            <CustomChart data={lgsExams} color="#10b981" title="LGS Puan" gradientId="colorLgs" />
           ) : (
             <>
-              <Card className="p-8 rounded-[3rem] border-none shadow-sm bg-white">
-                <h2 className="text-2xl font-black uppercase italic tracking-tight text-blue-600 flex items-center gap-3 mb-6">
-                  <Zap /> TYT Net Seyri
-                </h2>
-                {tytExams.length > 0 ? <RenderChart data={tytExams} color="#2563eb" title="TYT" /> : <EmptyState />}
-              </Card>
-              <Card className="p-8 rounded-[3rem] border-none shadow-sm bg-white">
-                <h2 className="text-2xl font-black uppercase italic tracking-tight text-slate-900 flex items-center gap-3 mb-6">
-                  <Target /> AYT Net Seyri
-                </h2>
-                {aytExams.length > 0 ? <RenderChart data={aytExams} color="#0f172a" title="AYT" /> : <EmptyState />}
-              </Card>
+              <CustomChart data={tytExams} color="#2563eb" title="TYT Net" gradientId="colorTyt" />
+              <CustomChart data={aytExams} color="#f97316" title="AYT Net" gradientId="colorAyt" />
             </>
           )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-8">
+            {/* KİTAP HEDEFİ */}
+            <Card className="p-8 rounded-[3rem] bg-white border border-slate-100 shadow-sm relative overflow-hidden">
+               <div className="flex justify-between items-start mb-6">
+                  <h3 className="text-[10px] font-black uppercase italic text-slate-400 flex items-center gap-2 tracking-widest italic"><BookMarked size={16} className="text-blue-500" /> Kitap Kurdu</h3>
+                  <div className="flex items-center gap-1 bg-blue-50 px-3 py-1 rounded-full text-blue-600 font-black text-[9px] uppercase italic tracking-tighter shadow-sm border border-blue-100"><Medal size={12} /> Seviye {stats.currentLevel}</div>
+               </div>
+               <div className="flex items-end gap-3 mb-4">
+                  <span className="text-6xl font-black italic text-slate-900 leading-none tracking-tighter tabular-nums">{stats.totalBookPages}</span>
+                  <div className="flex flex-col mb-1 leading-none"><span className="text-[10px] font-black text-slate-400 uppercase italic tracking-widest italic leading-none">Toplam</span><span className="text-[10px] font-black text-slate-400 uppercase italic tracking-widest italic leading-none">Sayfa</span></div>
+               </div>
+               <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden shadow-inner mb-3">
+                  <div className={`h-full transition-all duration-1000 ${stats.progressPercent > 80 ? 'bg-amber-500' : 'bg-blue-600'}`} style={{ width: `${stats.progressPercent}%` }} />
+               </div>
+               <div className="flex justify-between items-center px-1"><span className="text-[9px] font-bold text-slate-400 uppercase italic">Sonraki Seviye: {1000 - (stats.totalBookPages % 1000)} Sayfa</span><span className="text-[9px] font-black text-blue-600 uppercase italic tracking-tighter">%{Math.round(stats.progressPercent)}</span></div>
+            </Card>
+
+            {/* MOTİVASYON */}
+            <Card className="p-8 rounded-[3rem] bg-slate-900 text-white border-none shadow-2xl relative overflow-hidden flex flex-col justify-center min-h-[240px]">
+               <Sparkles className="absolute -right-6 -top-6 text-white/5" size={160} />
+               <p className="text-[9px] font-black text-blue-400 uppercase tracking-[0.4em] mb-4 italic">Motivasyon</p>
+               <h3 className="text-lg font-black italic leading-tight tracking-tighter relative z-10 italic">"{activeQuote}"</h3>
+            </Card>
+          </div>
         </div>
 
-        {/* SAĞ: GÜNLÜK ÇALIŞMALAR */}
+        {/* SAĞ TARAF: SON RAPORLAR */}
         <div className="lg:col-span-4 space-y-8">
-           <Card className="rounded-[3rem] border-none shadow-sm bg-white p-8">
-              <h2 className="text-xl font-black uppercase italic tracking-tight flex items-center gap-3 mb-8">
-                 <BarChart3 className="text-emerald-500" /> Günlük Odak
-              </h2>
-              <div className="space-y-6">
-                {dailyEntries.length === 0 ? <EmptyState tiny /> : 
-                dailyEntries.map((entry, i) => (
-                  <div key={i} className="flex items-center gap-4 group bg-slate-50 p-4 rounded-3xl hover:bg-slate-100 transition-all">
-                    <div className="w-1.5 h-12 bg-emerald-500 rounded-full shadow-[0_0_10px_rgba(16,185,129,0.3)]" />
-                    <div className="flex-1">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                        {format(new Date(entry.entry_date), 'd MMMM EEEE', { locale: tr })}
-                      </p>
-                      <h4 className="font-bold text-slate-700 flex items-center gap-2">
-                        {entry.total_duration_minutes} Dakika <Sparkles size={12} className="text-orange-400" />
-                      </h4>
-                    </div>
-                    <div className="bg-white p-2 rounded-xl shadow-sm">
-                       <CheckCircle2 size={18} className="text-emerald-500" />
-                    </div>
+          <Card className="p-8 rounded-[3rem] bg-white border border-slate-100 shadow-sm flex flex-col h-full overflow-hidden">
+            <h2 className="text-xl font-black uppercase italic tracking-tight text-slate-800 flex items-center gap-3 mb-8"><Calendar className="text-blue-600" /> Son Raporlar</h2>
+            <div className="space-y-5 overflow-y-auto max-h-[850px] pr-2 no-scrollbar">
+              {dailyEntries.map((entry, idx) => {
+                let data = entry.subjects_data;
+                if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) { data = {}; } }
+                const dailyTotalQ = (data.studies && Array.isArray(data.studies)) ? data.studies.reduce((a: number, b: any) => a + (parseInt(b.solved) || 0), 0) : 0;
+                return (
+                  <div key={idx} className="p-6 rounded-[2.5rem] bg-slate-50 border border-slate-100/50 hover:bg-white hover:shadow-xl transition-all group">
+                    <div className="flex justify-between items-center mb-4"><span className="text-[9px] font-black text-slate-400 uppercase italic tracking-widest">{format(new Date(entry.entry_date), 'd MMMM EEEE', { locale: tr })}</span><div className="text-2xl transform group-hover:scale-110 transition-transform drop-shadow-sm">{entry.mood || '😐'}</div></div>
+                    <div className="grid grid-cols-2 gap-6 border-t border-slate-200/40 pt-5"><div className="flex flex-col"><span className="text-base font-black text-slate-800 tracking-tighter italic tabular-nums">{entry.total_duration_minutes || 0} DK</span><span className="text-[8px] font-bold text-slate-400 uppercase italic tracking-tighter italic leading-none">ODAK SÜRESİ</span></div><div className="flex flex-col border-l border-slate-200/40 pl-6"><span className="text-base font-black text-blue-600 tracking-tighter italic tabular-nums">{dailyTotalQ} SORU</span><span className="text-[8px] font-bold text-slate-400 uppercase italic tracking-tighter italic leading-none">PERFORMANS</span></div></div>
                   </div>
-                ))}
-              </div>
-           </Card>
+                );
+              })}
+            </div>
+          </Card>
         </div>
       </div>
     </div>
   );
 }
-
-const EmptyState = ({ tiny }: { tiny?: boolean }) => (
-  <div className={`flex flex-col items-center justify-center ${tiny ? 'py-10' : 'py-20'} text-slate-300`}>
-    <Activity size={tiny ? 24 : 48} className="mb-4 opacity-20" />
-    <p className="text-[10px] font-black uppercase tracking-[0.2em] italic">Henüz Veri Girişi Yok</p>
-  </div>
-);

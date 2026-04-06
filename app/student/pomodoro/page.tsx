@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Timer, Play, Pause, RotateCcw, Coffee, BookOpen, ChevronLeft } from "lucide-react";
 import Link from "next/link";
 
@@ -20,22 +20,7 @@ export default function PomodoroPage() {
   const [isBreak, setIsBreak] = useState(false);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-  useEffect(() => {
-    if (isActive && timeLeft > 0) {
-      timerRef.current = setInterval(() => {
-        setTimeLeft((prev) => prev - 1);
-      }, 1000);
-    } else if (timeLeft === 0) {
-      handleComplete();
-    } else {
-      if (timerRef.current) clearInterval(timerRef.current);
-    }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [isActive, timeLeft]);
-
-  const handleComplete = () => {
+  const handleComplete = useCallback(() => {
     if (timerRef.current) clearInterval(timerRef.current);
     setIsActive(false);
     const audio = new Audio("https://mixkit.co");
@@ -50,9 +35,30 @@ export default function PomodoroPage() {
       setIsBreak(false);
       setTimeLeft(selectedSession.work * 60);
     }
-  };
+  }, [isBreak, selectedSession.break, selectedSession.work]);
 
-  const toggleTimer = () => setIsActive(!isActive);
+  useEffect(() => {
+    let completeTimer: ReturnType<typeof setTimeout> | null = null;
+
+    if (isActive && timeLeft > 0) {
+      timerRef.current = setInterval(() => {
+        setTimeLeft((prev) => prev - 1);
+      }, 1000);
+    } else if (timeLeft === 0) {
+      completeTimer = setTimeout(() => {
+        handleComplete();
+      }, 0);
+    } else {
+      if (timerRef.current) clearInterval(timerRef.current);
+    }
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (completeTimer) clearTimeout(completeTimer);
+    };
+  }, [handleComplete, isActive, timeLeft]);
+
+  const toggleTimer = () => setIsActive((prev) => !prev);
   
   const resetTimer = () => {
     setIsActive(false);

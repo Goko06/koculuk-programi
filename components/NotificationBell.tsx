@@ -1,19 +1,27 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { Bell, Check, X } from 'lucide-react';
+import { Bell } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { formatDistanceToNow } from 'date-fns';
 import { tr } from 'date-fns/locale';
 
+type NotificationItem = {
+  id: string;
+  title: string;
+  message: string;
+  is_read: boolean;
+  created_at: string;
+};
+
 export default function NotificationBell() {
-  const [notifications, setNotifications] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
-  const fetchNotifications = async () => {
+  const fetchNotifications = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
@@ -24,18 +32,24 @@ export default function NotificationBell() {
       .order('created_at', { ascending: false })
       .limit(10);
 
-    setNotifications(data || []);
-    setUnreadCount(data?.filter(n => !n.is_read).length || 0);
-  };
+    const safeData = (data ?? []) as NotificationItem[];
+    setNotifications(safeData);
+    setUnreadCount(safeData.filter((n) => !n.is_read).length);
+  }, [supabase]);
 
   useEffect(() => {
-    fetchNotifications();
+    const initTimer = setTimeout(() => {
+      void fetchNotifications();
+    }, 0);
     const channel = supabase
       .channel('notif-changes')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, fetchNotifications)
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, []);
+    return () => {
+      clearTimeout(initTimer);
+      supabase.removeChannel(channel);
+    };
+  }, [fetchNotifications, supabase]);
 
   const markAsRead = async (id: string) => {
     await supabase.from('notifications').update({ is_read: true }).eq('id', id);
@@ -67,7 +81,7 @@ export default function NotificationBell() {
               <div key={n.id} onClick={() => markAsRead(n.id)} className={`p-5 border-b border-slate-50 cursor-pointer transition-all hover:bg-slate-50 relative ${!n.is_read ? 'bg-blue-50/30' : ''}`}>
                 {!n.is_read && <div className="absolute left-2 top-1/2 -translate-y-1/2 w-1.5 h-1.5 bg-blue-600 rounded-full" />}
                 <p className="font-black text-slate-900 text-sm mb-1 leading-tight">{n.title}</p>
-                <p className="text-xs font-medium text-slate-500 italic leading-relaxed line-clamp-2">"{n.message}"</p>
+                <p className="text-xs font-medium text-slate-500 italic leading-relaxed line-clamp-2">{n.message}</p>
                 <p className="text-[9px] font-black text-slate-300 uppercase mt-3 tracking-widest">
                   {formatDistanceToNow(new Date(n.created_at), { addSuffix: true, locale: tr })}
                 </p>

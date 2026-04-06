@@ -31,8 +31,9 @@ export default function ProfessionalReportsPage() {
   const [data, setData] = useState<{
     students: any[],
     exams: any[],
-    tasks: any[]
-  }>({ students: [], exams: [], tasks: [] });
+    tasks: any[],
+    dailyEntries: any[] // Yeni eklendi
+  }>({ students: [], exams: [], tasks: [], dailyEntries: [] });
 
   const fetchData = useCallback(async () => {
     try {
@@ -44,18 +45,20 @@ export default function ProfessionalReportsPage() {
       
       if (sData && sData.length > 0) {
         const sIds = sData.map(s => s.id);
-        const [examsRes, tasksRes] = await Promise.all([
+        const [examsRes, tasksRes, dailyRes] = await Promise.all([
           supabase.from('exams').select('*').in('student_id', sIds),
-          supabase.from('student_tasks').select('*').in('student_id', sIds)
+          supabase.from('student_tasks').select('*').in('student_id', sIds),
+          supabase.from('daily_entries').select('*').in('student_id', sIds) // Günlük girişler çekiliyor
         ]);
 
         setData({
           students: sData,
           exams: examsRes.data || [],
-          tasks: tasksRes.data || []
+          tasks: tasksRes.data || [],
+          dailyEntries: dailyRes.data || []
         });
       } else {
-        setData({ students: [], exams: [], tasks: [] });
+        setData({ students: [], exams: [], tasks: [], dailyEntries: [] });
       }
     } catch (error) {
       toast.error("Veriler çekilemedi.");
@@ -76,13 +79,31 @@ export default function ProfessionalReportsPage() {
     const sIds = groupStudents.map(s => s.id);
     const groupExams = data.exams.filter(e => sIds.includes(e.student_id));
     const groupTasks = data.tasks.filter(t => sIds.includes(t.student_id));
+    const groupDailyEntries = data.dailyEntries.filter(d => sIds.includes(d.student_id));
 
     const calcAvg = (list: any[]) => list.length > 0 ? (list.reduce((a, c) => a + Number(c.total_net), 0) / list.length).toFixed(1) : "0";
 
-    const chartData = groupStudents.map(s => ({
-      name: s.full_name.split(' ')[0],
-      soru: groupTasks.filter(t => t.student_id === s.id).reduce((a, c) => a + (Number(c.completed_questions) || 0), 0)
-    })).filter(d => d.soru > 0).sort((a, b) => b.soru - a.soru).slice(0, 6);
+    // GRAFİK VERİSİ HESAPLAMA (GÜNLÜK RAPORLAR DAHİL)
+    const chartData = groupStudents.map(s => {
+      // 1. Koçun verdiği görevlerden gelen tamamlanmış sorular
+      const taskSoru = groupTasks
+        .filter(t => t.student_id === s.id && t.status === 'completed')
+        .reduce((a, c) => a + (Number(c.completed_questions) || 0), 0);
+
+      // 2. Öğrencinin günlük raporlarından (subjects_data) gelen sorular
+      const dailySoru = groupDailyEntries
+        .filter(d => d.student_id === s.id)
+        .reduce((acc, entry) => {
+          const studies = entry.subjects_data?.studies || [];
+          const entryTotal = studies.reduce((sAcc: number, study: any) => sAcc + (Number(study.solved) || 0), 0);
+          return acc + entryTotal;
+        }, 0);
+
+      return {
+        name: s.full_name.split(' ')[0],
+        soru: taskSoru + dailySoru // Toplam soru sayısı
+      };
+    }).filter(d => d.soru > 0).sort((a, b) => b.soru - a.soru).slice(0, 6);
 
     return {
       students: groupStudents,

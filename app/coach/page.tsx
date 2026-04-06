@@ -44,7 +44,7 @@ interface Exam {
   created_at: string; 
   exam_type: 'LGS' | 'TYT' | 'AYT';
 }
-
+const supabase = createClient();
 export default function CoachPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [allExams, setAllExams] = useState<Exam[]>([]);
@@ -58,7 +58,7 @@ export default function CoachPage() {
     fullName: '', email: '', phone: '', password: '', classLevel: '', branch: ''
   });
 
-  const supabase = createClient();
+  
   const router = useRouter();
 
   const fetchData = useCallback(async () => {

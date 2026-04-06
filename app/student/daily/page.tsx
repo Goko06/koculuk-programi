@@ -9,12 +9,13 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   BookOpen, Clock, Send, Plus, Trash2,
-  Smile, Meh, Frown, Loader2, ArrowLeft, Sparkles, MessageSquare, Book
+  Smile, Meh, Frown, Loader2, ArrowLeft, Sparkles, MessageSquare, Book, Calendar, Target
 } from 'lucide-react';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { toast } from 'sonner';
+
 const SUBJECTS_BY_LEVEL: any = {
   "5": ["Türkçe", "Matematik", "Fen Bilimleri", "Sosyal Bilgiler", "İngilizce", "Din Kültürü"],
   "6": ["Türkçe", "Matematik", "Fen Bilimleri", "Sosyal Bilgiler", "İngilizce", "Din Kültürü"],
@@ -39,10 +40,11 @@ function DailyReportContent() {
   const [studentLevel, setStudentLevel] = useState('12');
   
   const [mood, setMood] = useState('😐');
+  const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
   const [totalDuration, setTotalDuration] = useState(pomodoroValue || '');
   const [generalNote, setGeneralNote] = useState('');
   const [subjects, setSubjects] = useState<any[]>([
-    { subject: '', solved: '', correct: '', wrong: '', duration: '', source: '' }
+    { subject: '', topic: '', solved: '', correct: '', wrong: '', duration: '', source: '' }
   ]);
   const [bookData, setBookData] = useState({ name: '', author: '', pages: '' });
 
@@ -59,7 +61,7 @@ function DailyReportContent() {
     getStudentInfo();
   }, [supabase]);
 
-  const addSubject = () => setSubjects([...subjects, { subject: '', solved: '', correct: '', wrong: '', duration: '', source: '' }]);
+  const addSubject = () => setSubjects([...subjects, { subject: '', topic: '', solved: '', correct: '', wrong: '', duration: '', source: '' }]);
   const removeSubject = (index: number) => setSubjects(subjects.filter((_, i) => i !== index));
   const updateSubject = (index: number, field: string, value: string) => {
     const newSubjects = [...subjects];
@@ -76,13 +78,14 @@ function DailyReportContent() {
 
       const { error: entryError } = await supabase.from('daily_entries').insert([{
         student_id: user.id,
-        entry_date: new Date().toISOString().split('T')[0],
+        entry_date: reportDate,
         mood: mood,
         total_duration_minutes: parseInt(totalDuration) || 0,
         notes: generalNote,
         subjects_data: {
           studies: subjects.map(s => ({
             subject: s.subject,
+            topic: s.topic,
             solved: parseInt(s.solved) || 0,
             correct: parseInt(s.correct) || 0,
             wrong: parseInt(s.wrong) || 0,
@@ -127,10 +130,21 @@ function DailyReportContent() {
           <Button type="button" onClick={() => router.back()} variant="ghost" className="rounded-full w-14 h-14 bg-slate-50"><ArrowLeft size={24} /></Button>
           <h1 className="text-3xl font-black italic uppercase tracking-tighter leading-none">Günlük Rapor</h1>
         </div>
-        <div className="flex bg-slate-100 p-2 rounded-[1.5rem] gap-2">
-          {['😞', '😐', '😊'].map((m) => (
-            <button key={m} type="button" onClick={() => setMood(m)} className={`p-4 rounded-xl transition-all ${mood === m ? 'bg-white shadow-lg scale-110' : 'text-slate-400 opacity-50'}`}>{m}</button>
-          ))}
+        <div className="flex flex-col md:flex-row items-center gap-4">
+          <div className="flex items-center gap-2 bg-slate-50 px-4 py-2 rounded-2xl border border-slate-100">
+            <Calendar size={18} className="text-blue-500" />
+            <input 
+              type="date" 
+              value={reportDate} 
+              onChange={(e) => setReportDate(e.target.value)}
+              className="bg-transparent border-none font-bold text-sm outline-none"
+            />
+          </div>
+          <div className="flex bg-slate-100 p-2 rounded-[1.5rem] gap-2">
+            {['😞', '😐', '😊'].map((m) => (
+              <button key={m} type="button" onClick={() => setMood(m)} className={`p-4 rounded-xl transition-all ${mood === m ? 'bg-white shadow-lg scale-110' : 'text-slate-400 opacity-50'}`}>{m}</button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -146,45 +160,76 @@ function DailyReportContent() {
             <Button type="button" onClick={addSubject} variant="outline" className="rounded-2xl font-black uppercase text-[10px]"><Plus size={16} /> Ekle</Button>
           </div>
           {subjects.map((s, index) => (
-            <Card key={index} className="rounded-[2.5rem] border-none shadow-sm p-8 bg-white relative">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <Select onValueChange={(v) => updateSubject(index, 'subject', v)} value={s.subject}>
-                  <SelectTrigger className="h-14 rounded-2xl bg-slate-50 border-none font-bold"><SelectValue placeholder="Ders Seçin" /></SelectTrigger>
-                  <SelectContent className="bg-white rounded-xl">{(SUBJECTS_BY_LEVEL[studentLevel] || []).map((l: string) => <SelectItem key={l} value={l} className="font-bold py-3">{l}</SelectItem>)}</SelectContent>
-                </Select>
-                <Input placeholder="Kaynak Adı ve Konu" value={s.source} onChange={(e) => updateSubject(index, 'source', e.target.value)} className="h-14 rounded-2xl bg-slate-50 border-none font-bold" />
-                <div className="flex gap-2">
-                  <Input type="number" placeholder="Süre" value={s.duration} onChange={(e) => updateSubject(index, 'duration', e.target.value)} className="h-14 rounded-2xl bg-slate-50 border-none font-black text-center" />
-                  <Input type="number" placeholder="D" value={s.correct} onChange={(e) => updateSubject(index, 'correct', e.target.value)} className="h-14 rounded-2xl bg-slate-50 border-none font-black text-emerald-600 text-center" />
-                  <Input type="number" placeholder="Y" value={s.wrong} onChange={(e) => updateSubject(index, 'wrong', e.target.value)} className="h-14 rounded-2xl bg-slate-50 border-none font-black text-red-500 text-center" />
+            <Card key={index} className="rounded-[2.5rem] border-none shadow-sm p-8 bg-white relative overflow-hidden group">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div className="space-y-2">
+                  <Label className="text-[9px] font-black uppercase text-slate-400 ml-1">Ders</Label>
+                  <Select onValueChange={(v) => updateSubject(index, 'subject', v)} value={s.subject}>
+                    <SelectTrigger className="h-14 rounded-2xl bg-slate-50 border-none font-bold"><SelectValue placeholder="Seç" /></SelectTrigger>
+                    <SelectContent className="bg-white rounded-xl">{(SUBJECTS_BY_LEVEL[studentLevel] || []).map((l: string) => <SelectItem key={l} value={l} className="font-bold py-3">{l}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-[9px] font-black uppercase text-slate-400 ml-1">Kaynak</Label>
+                  <Input placeholder="Yayın/Kitap Adı" value={s.source} onChange={(e) => updateSubject(index, 'source', e.target.value)} className="h-14 rounded-2xl bg-slate-50 border-none font-bold" />
+                </div>
+                <div className="space-y-2 lg:col-span-2">
+                  <Label className="text-[9px] font-black uppercase text-slate-400 ml-1">Konu</Label>
+                  <Input placeholder="Çalışılan Konu Başlığı" value={s.topic} onChange={(e) => updateSubject(index, 'topic', e.target.value)} className="h-14 rounded-2xl bg-slate-50 border-none font-bold" />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-[9px] font-black uppercase text-slate-400 ml-1">Soru Sayısı</Label>
+                  <Input type="number" placeholder="Toplam" value={s.solved} onChange={(e) => updateSubject(index, 'solved', e.target.value)} className="h-14 rounded-2xl bg-slate-50 border-none font-bold" />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-[9px] font-black uppercase text-emerald-500 ml-1">Doğru</Label>
+                  <Input type="number" placeholder="D" value={s.correct} onChange={(e) => updateSubject(index, 'correct', e.target.value)} className="h-14 rounded-2xl bg-emerald-50/50 border-none font-bold text-emerald-600" />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-[9px] font-black uppercase text-rose-500 ml-1">Yanlış</Label>
+                  <Input type="number" placeholder="Y" value={s.wrong} onChange={(e) => updateSubject(index, 'wrong', e.target.value)} className="h-14 rounded-2xl bg-rose-50/50 border-none font-bold text-rose-600" />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-[9px] font-black uppercase text-blue-500 ml-1">Süre (Dk)</Label>
+                  <Input type="number" placeholder="Dakika" value={s.duration} onChange={(e) => updateSubject(index, 'duration', e.target.value)} className="h-14 rounded-2xl bg-blue-50/50 border-none font-bold text-blue-600" />
                 </div>
               </div>
-              {subjects.length > 1 && <Button type="button" onClick={() => removeSubject(index)} variant="ghost" className="absolute -top-2 -right-2 text-red-400 hover:bg-red-50 rounded-full"><Trash2 size={18} /></Button>}
+              {subjects.length > 1 && (
+                <Button type="button" onClick={() => removeSubject(index)} variant="ghost" className="absolute top-4 right-4 text-slate-300 hover:text-red-500 rounded-full h-10 w-10 p-0"><Trash2 size={18} /></Button>
+              )}
             </Card>
           ))}
         </div>
 
-        <Card className="rounded-[3rem] border-none shadow-sm bg-white p-10">
-          <h3 className="font-black italic uppercase text-xl mb-6 flex items-center gap-2"><BookOpen className="text-amber-500" /> Kitap Okuma</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <Input placeholder="Kitap Adı" value={bookData.name} onChange={(e) => setBookData({...bookData, name: e.target.value})} className="h-14 rounded-2xl bg-amber-50 border-none font-bold italic" />
-            <Input placeholder="Yazar" value={bookData.author} onChange={(e) => setBookData({...bookData, author: e.target.value})} className="h-14 rounded-2xl bg-amber-50 border-none font-bold italic" />
-            <Input type="number" placeholder="Sayfa" value={bookData.pages} onChange={(e) => setBookData({...bookData, pages: e.target.value})} className="h-14 rounded-2xl bg-amber-50 border-none font-black text-amber-600" />
-          </div>
-        </Card>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <Card className="rounded-[2.5rem] border-none shadow-sm p-8 bg-white space-y-4">
+            <h3 className="font-black italic uppercase text-lg tracking-tighter flex items-center gap-2 text-amber-500"><Book size={20} /> Kitap Okuma</h3>
+            <div className="space-y-4">
+              <Input placeholder="Kitap Adı" value={bookData.name} onChange={(e) => setBookData({...bookData, name: e.target.value})} className="h-14 rounded-2xl bg-slate-50 border-none font-bold" />
+              <div className="grid grid-cols-2 gap-4">
+                <Input placeholder="Yazar" value={bookData.author} onChange={(e) => setBookData({...bookData, author: e.target.value})} className="h-14 rounded-2xl bg-slate-50 border-none font-bold" />
+                <Input type="number" placeholder="Sayfa" value={bookData.pages} onChange={(e) => setBookData({...bookData, pages: e.target.value})} className="h-14 rounded-2xl bg-slate-50 border-none font-bold" />
+              </div>
+            </div>
+          </Card>
+          <Card className="rounded-[2.5rem] border-none shadow-sm p-8 bg-white space-y-4">
+            <h3 className="font-black italic uppercase text-lg tracking-tighter flex items-center gap-2 text-blue-500"><MessageSquare size={20} /> Günlük Notun</h3>
+            <textarea value={generalNote} onChange={(e) => setGeneralNote(e.target.value)} className="w-full h-32 bg-slate-50 rounded-2xl p-4 border-none font-bold text-sm outline-none resize-none" placeholder="Bugün neler yaptın? Neler seni zorladı?..." />
+          </Card>
+        </div>
 
-        <Card className="rounded-[3rem] border-none shadow-sm bg-white p-10">
-          <textarea value={generalNote} onChange={(e) => setGeneralNote(e.target.value)} className="w-full h-32 bg-slate-50 rounded-[2rem] border-none p-6 text-sm font-bold outline-none resize-none" placeholder="Bugün nasıl geçti?" />
-        </Card>
-
-        <Button disabled={submitting} type="submit" className="fixed bottom-8 left-1/2 -translate-x-1/2 w-64 h-16 rounded-[2rem] bg-blue-600 hover:bg-slate-900 text-white font-black uppercase italic tracking-[0.2em] shadow-2xl transition-all">
-          {submitting ? <Loader2 className="animate-spin" /> : 'RAPORU GÖNDER'}
+        <Button disabled={submitting} type="submit" className="w-full h-20 rounded-[2rem] bg-blue-600 hover:bg-slate-900 text-white font-black uppercase text-xl tracking-[0.2em] shadow-xl shadow-blue-100 transition-all active:scale-95">
+          {submitting ? <Loader2 className="animate-spin" /> : <>Raporu Gönder <Send size={24} className="ml-3" /></>}
         </Button>
       </form>
     </div>
   );
 }
 
-export default function DailyReportPage() {
-  return <Suspense><DailyReportContent /></Suspense>;
+export default function StudentDailyPage() {
+  return (
+    <Suspense fallback={<div className="h-screen flex items-center justify-center font-black animate-pulse text-blue-600">YÜKLENİYOR...</div>}>
+      <DailyReportContent />
+    </Suspense>
+  );
 }

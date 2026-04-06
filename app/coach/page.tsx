@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import {
   Users, Search, UserPlus, LayoutGrid, Zap, AlertTriangle,
   MessageCircle, ChevronRight, Sparkles, TrendingDown,
-  Mail, Phone, Lock, Target
+  Mail, Phone, Lock, Target, Archive, Trash2, RotateCcw
 } from 'lucide-react';
 import {
   Dialog,
@@ -33,6 +33,7 @@ interface Student {
   grade_level: string; 
   major: string; 
   phone: string | null; 
+  status: 'active' | 'archived' | 'deleted'; // Yeni alan
   hasDrop?: boolean;
   hasActivityToday?: boolean;
 }
@@ -41,7 +42,7 @@ interface Exam {
   student_id: string; 
   total_net: number; 
   created_at: string; 
-  exam_type: 'LGS' | 'TYT' | 'AYT'; // Sınav türü ayrımı
+  exam_type: 'LGS' | 'TYT' | 'AYT';
 }
 
 export default function CoachPage() {
@@ -50,6 +51,7 @@ export default function CoachPage() {
   const [coachName, setCoachName] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [viewMode, setViewMode] = useState<'active' | 'archived' | 'deleted'>('active'); // Filtre state
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState({
@@ -73,14 +75,19 @@ export default function CoachPage() {
         .single();
       
       if (coachProfile) setCoachName(coachProfile.full_name);
+      
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-    
-    if (sessionError || !session) {
-      router.push("/login");
-      return;
-    }
+      if (sessionError || !session) {
+        router.push("/login");
+        return;
+      }
 
-      const { data: sData } = await supabase.from('profiles').select('*').eq('coach_id', user.id).eq('role', 'student').order('full_name', { ascending: true });
+      const { data: sData } = await supabase.from('profiles')
+        .select('*')
+        .eq('coach_id', user.id)
+        .eq('role', 'student')
+        .order('full_name', { ascending: true });
+      
       const currentStudents = (sData as any[]) || [];
 
       if (currentStudents.length > 0) {
@@ -99,8 +106,9 @@ export default function CoachPage() {
             grade_level: s.class_level, 
             major: s.branch, 
             phone: s.phone_number, 
+            status: s.status || 'active',
             hasDrop: drop,
-            hasActivityToday: Math.random() > 0.7 // Simülasyon
+            hasActivityToday: Math.random() > 0.7 
           };
         }));
       }
@@ -109,11 +117,25 @@ export default function CoachPage() {
     } finally {
       setLoading(false);
     }
-  }, [supabase]);
+  }, [supabase, router]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // Net Hesaplama Fonksiyonu
+  const updateStudentStatus = async (id: string, newStatus: 'active' | 'archived' | 'deleted') => {
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ status: newStatus })
+        .eq('id', id);
+
+      if (error) throw error;
+      toast.success("Öğrenci durumu güncellendi.");
+      fetchData();
+    } catch (err) {
+      toast.error("İşlem başarısız oldu.");
+    }
+  };
+
   const getAvgByType = (type: string) => {
     const filteredExams = allExams.filter(e => e.exam_type === type);
     if (filteredExams.length === 0) return "0";
@@ -123,10 +145,8 @@ export default function CoachPage() {
   const handleCreateStudent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.classLevel) return toast.error("Lütfen sınıf seçin.");
-    
     setIsSubmitting(true);
     const { data: auth } = await supabase.auth.getUser();
-    
     try {
       const res = await fetch('/api/create-student', {
         method: 'POST',
@@ -134,7 +154,6 @@ export default function CoachPage() {
         body: JSON.stringify({ ...formData, coachId: auth.user?.id }),
       });
       const result = await res.json();
-      
       if (result.success) {
         toast.success("Öğrenci başarıyla oluşturuldu.");
         setIsModalOpen(false);
@@ -150,8 +169,13 @@ export default function CoachPage() {
     }
   };
 
-  const criticalStudentsList = students.filter(s => s.hasDrop);
-  const filtered = students.filter(s => (s.full_name || "").toLowerCase().includes(searchQuery.toLowerCase()));
+  const criticalStudentsList = students.filter(s => s.hasDrop && s.status === 'active');
+  
+  // Arama ve Filtreleme (active/archived/deleted)
+  const filtered = students.filter(s => 
+    s.status === viewMode && 
+    (s.full_name || "").toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   if (loading) return <div className="h-screen flex items-center justify-center font-black text-blue-600 animate-pulse text-xs uppercase italic">Yükleniyor...</div>;
 
@@ -168,11 +192,20 @@ export default function CoachPage() {
             <p className="text-slate-400 font-bold text-[9px] uppercase tracking-widest mt-1 italic">Öğrencilerim</p>
           </div>
         </div>
+
         <div className="flex flex-col sm:flex-row items-center gap-4 w-full lg:w-auto">
+          {/* Görünüm Filtreleri */}
+          <div className="flex bg-slate-100 p-1.5 rounded-2xl gap-1">
+            <button onClick={() => setViewMode('active')} className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${viewMode === 'active' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>Aktif</button>
+            <button onClick={() => setViewMode('archived')} className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${viewMode === 'archived' ? 'bg-white shadow-sm text-amber-600' : 'text-slate-400 hover:text-slate-600'}`}>Arşiv</button>
+            <button onClick={() => setViewMode('deleted')} className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${viewMode === 'deleted' ? 'bg-white shadow-sm text-red-600' : 'text-slate-400 hover:text-slate-600'}`}>Silinenler</button>
+          </div>
+
           <div className="relative w-full sm:w-72">
             <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
             <input type="text" placeholder="Öğrenci ara..." className="w-full pl-12 pr-6 h-14 bg-slate-50 border-none rounded-2xl font-bold text-sm outline-none focus:ring-2 ring-blue-500/20" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
           </div>
+
           <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
             <DialogTrigger asChild>
               <Button className="bg-blue-600 hover:bg-slate-900 rounded-2xl font-black px-8 h-14 text-white uppercase tracking-widest text-[10px] shadow-lg shadow-blue-100 transition-all">
@@ -189,14 +222,12 @@ export default function CoachPage() {
                   <p className="text-slate-400 text-[10px] font-bold uppercase tracking-[0.2em]">Öğrenci Profilini Oluşturun</p>
                 </DialogHeader>
               </div>
-
               <form onSubmit={handleCreateStudent} className="p-10 space-y-6">
                 <div className="space-y-4">
                   <div className="relative group">
                     <Users className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-blue-500 transition-colors" size={18} />
                     <Input placeholder="Ad Soyad" required value={formData.fullName} onChange={e => setFormData({...formData, fullName: e.target.value})} className="h-14 pl-12 rounded-2xl bg-slate-50 border-none font-bold" />
                   </div>
-
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="relative group">
                       <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-blue-500 transition-colors" size={18} />
@@ -207,12 +238,10 @@ export default function CoachPage() {
                       <Input placeholder="Telefon" required value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="h-14 pl-12 rounded-2xl bg-slate-50 border-none font-bold" />
                     </div>
                   </div>
-
                   <div className="relative group">
                     <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-blue-500 transition-colors" size={18} />
                     <Input type="password" placeholder="Şifre" required value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="h-14 pl-12 rounded-2xl bg-slate-50 border-none font-bold" />
                   </div>
-                  
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                        <label className="text-[10px] font-black uppercase text-slate-400 ml-2 tracking-widest italic">Sınıf</label>
@@ -227,7 +256,6 @@ export default function CoachPage() {
                         </SelectContent>
                       </Select>
                     </div>
-
                     <div className="space-y-2">
                       <label className="text-[10px] font-black uppercase text-slate-400 ml-2 tracking-widest italic">Branş</label>
                       <Select disabled={!['12', 'mezun'].includes(formData.classLevel)} onValueChange={val => setFormData({...formData, branch: val})}>
@@ -243,14 +271,9 @@ export default function CoachPage() {
                     </div>
                   </div>
                 </div>
-
                 <div className="pt-6">
                   <Button type="submit" disabled={isSubmitting} className="w-full h-16 bg-blue-600 hover:bg-slate-900 rounded-[1.5rem] font-black uppercase tracking-[0.2em] text-xs shadow-xl shadow-blue-100 flex items-center justify-center gap-3">
-                    {isSubmitting ? (
-                      <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    ) : (
-                      <>Kaydı Tamamla <ChevronRight size={18} /></>
-                    )}
+                    {isSubmitting ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <>Kaydı Tamamla <ChevronRight size={18} /></>}
                   </Button>
                 </div>
               </form>
@@ -259,37 +282,28 @@ export default function CoachPage() {
         </div>
       </div>
 
-      {/* İstatistik Kartları Grid (Dinamik Netler Dahil) */}
+      {/* İstatistikler */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-        {/* Toplam Öğrenci */}
         <Card className="p-6 rounded-[2rem] border-none shadow-sm bg-white flex flex-col items-center justify-center text-center">
           <div className="p-3 bg-slate-100 rounded-xl mb-3 text-slate-600"><Users size={20} /></div>
-          <h4 className="text-3xl font-black italic text-slate-900 leading-none">{students.length}</h4>
+          <h4 className="text-3xl font-black italic text-slate-900 leading-none">{students.filter(s => s.status === 'active').length}</h4>
           <p className="text-[8px] font-black uppercase text-slate-400 tracking-widest mt-2">Öğrenciler</p>
         </Card>
-
-        {/* LGS ORT */}
         <Card className="p-6 rounded-[2rem] border-none shadow-sm bg-white flex flex-col items-center justify-center text-center border-b-4 border-orange-400">
           <div className="p-3 bg-orange-50 rounded-xl mb-3 text-orange-500 font-black text-[10px]">LGS</div>
           <h4 className="text-3xl font-black italic text-slate-900 leading-none">{getAvgByType('LGS')}</h4>
           <p className="text-[8px] font-black uppercase text-slate-400 tracking-widest mt-2">Ortalama Puan</p>
         </Card>
-
-        {/* TYT ORT */}
         <Card className="p-6 rounded-[2rem] border-none shadow-sm bg-white flex flex-col items-center justify-center text-center border-b-4 border-blue-500">
           <div className="p-3 bg-blue-50 rounded-xl mb-3 text-blue-600 font-black text-[10px]">TYT</div>
           <h4 className="text-3xl font-black italic text-slate-900 leading-none">{getAvgByType('TYT')}</h4>
           <p className="text-[8px] font-black uppercase text-slate-400 tracking-widest mt-2">Ortalama Net</p>
         </Card>
-
-        {/* AYT ORT */}
         <Card className="p-6 rounded-[2rem] border-none shadow-sm bg-white flex flex-col items-center justify-center text-center border-b-4 border-purple-500">
           <div className="p-3 bg-purple-50 rounded-xl mb-3 text-purple-600 font-black text-[10px]">AYT</div>
           <h4 className="text-3xl font-black italic text-slate-900 leading-none">{getAvgByType('AYT')}</h4>
           <p className="text-[8px] font-black uppercase text-slate-400 tracking-widest mt-2">Ortalama Net</p>
         </Card>
-
-        {/* Kritik Kartı */}
         <div className="relative group">
           <Card className="p-6 rounded-[2rem] border-none shadow-sm bg-white flex flex-col items-center justify-center text-center h-full">
             <div className="p-3 bg-red-50 rounded-xl mb-3 text-red-500"><AlertTriangle size={20} /></div>
@@ -310,16 +324,6 @@ export default function CoachPage() {
         {filtered.map((s) => (
           <Card key={s.id} onClick={() => router.push(`/coach/student/${s.id}`)} className="relative bg-white border-none shadow-sm rounded-[2rem] hover:shadow-xl transition-all duration-300 group cursor-pointer overflow-hidden border border-transparent hover:border-blue-100">
             <div className={`h-1.5 w-full ${s.hasDrop ? 'bg-red-500' : 'bg-blue-600'}`} />
-            
-            {s.hasActivityToday && (
-              <div className="absolute top-6 right-6">
-                <span className="relative flex h-3 w-3">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-600"></span>
-                </span>
-              </div>
-            )}
-
             <div className="p-6">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-3">
@@ -329,7 +333,20 @@ export default function CoachPage() {
                     <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">{s.grade_level}. Sınıf • {s.major}</p>
                   </div>
                 </div>
-                <Button onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me{s.phone}`, '_blank'); }} className="w-10 h-10 rounded-xl bg-green-50 text-green-600 hover:bg-green-600 hover:text-white p-0 shadow-none border-none"><MessageCircle size={18} /></Button>
+                {/* Aksiyon Grubu */}
+                <div className="flex flex-col gap-2">
+                   <Button onClick={(e) => { e.stopPropagation(); window.open(`https://wa.me{s.phone}`, '_blank'); }} className="w-9 h-9 rounded-xl bg-green-50 text-green-600 hover:bg-green-600 hover:text-white p-0 shadow-none border-none"><MessageCircle size={16} /></Button>
+                   
+                   {/* Arşivleme/Geri Alma */}
+                   <Button onClick={(e) => { e.stopPropagation(); updateStudentStatus(s.id, s.status === 'archived' ? 'active' : 'archived'); }} className="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 hover:bg-amber-600 hover:text-white p-0 shadow-none border-none">
+                     {s.status === 'archived' ? <RotateCcw size={16} /> : <Archive size={16} />}
+                   </Button>
+
+                   {/* Silme/Geri Alma */}
+                   <Button onClick={(e) => { e.stopPropagation(); updateStudentStatus(s.id, s.status === 'deleted' ? 'active' : 'deleted'); }} className="w-9 h-9 rounded-xl bg-red-50 text-red-600 hover:bg-red-600 hover:text-white p-0 shadow-none border-none">
+                     {s.status === 'deleted' ? <RotateCcw size={16} /> : <Trash2 size={16} />}
+                   </Button>
+                </div>
               </div>
               <div className="flex items-center justify-between pt-4 border-t border-slate-50">
                 <span className={`text-[8px] font-black uppercase italic ${s.hasDrop ? 'text-red-500' : 'text-slate-300'}`}>{s.hasDrop ? '⚠ TAKİP ET' : 'DURUM İYİ'}</span>
@@ -339,6 +356,12 @@ export default function CoachPage() {
           </Card>
         ))}
       </div>
+      
+      {filtered.length === 0 && (
+        <div className="text-center py-20 bg-white rounded-[2rem] border border-dashed border-slate-200">
+           <p className="text-slate-400 font-bold uppercase italic text-xs tracking-[0.2em]">Bu bölümde kayıtlı öğrenci bulunamadı.</p>
+        </div>
+      )}
     </div>
   );
 }

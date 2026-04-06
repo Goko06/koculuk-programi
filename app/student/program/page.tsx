@@ -3,11 +3,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { Card, CardContent } from '@/components/ui/card';
-import { 
-  CheckCircle2, Circle, Calendar, Loader2, LayoutGrid, Check, 
-  MessageSquare, Send, Clock, AlertCircle, Sparkles, ChevronRight 
+import {
+  CheckCircle2, Circle, Calendar, LayoutGrid, Check,
+  MessageSquare, Send, Sparkles, ChevronLeft, ChevronRight, Target
 } from 'lucide-react';
-import { format, startOfWeek, addDays, isSameDay } from 'date-fns';
+import { format, startOfWeek, addDays, addWeeks, subWeeks, isSameDay } from 'date-fns';
 import { tr } from 'date-fns/locale';
 import { toast } from 'sonner';
 import {
@@ -27,13 +27,14 @@ export default function StudentProgram() {
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [completionNote, setCompletionNote] = useState('');
   const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
-  const [activeDay, setActiveDay] = useState(format(new Date(), 'EEEE', { locale: tr }));
-
+  
+  // Hafta navigasyonu için state
+  const [currentWeekStart, setCurrentWeekStart] = useState(startOfWeek(new Date(), { weekStartsOn: 1 }));
+  
   const supabase = createClient();
 
-  // Tarihleri hesapla (Haftalık görünüm için)
-  const weekStart = startOfWeek(new Date(), { weekStartsOn: 1 });
-  const weekDays = DAYS.map((_, index) => addDays(weekStart, index));
+  // Seçili haftanın 7 gününü hesapla
+  const weekDays = DAYS.map((_, index) => addDays(currentWeekStart, index));
 
   const fetchTasks = useCallback(async () => {
     try {
@@ -41,19 +42,15 @@ export default function StudentProgram() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      // student_tasks tablosundan mevcut haftanın görevlerini çek
       const { data, error } = await supabase
         .from('student_tasks')
         .select('*')
-        .eq('student_id', user.id)
-        .order('due_date', { ascending: true });
+        .eq('student_id', user.id);
 
       if (error) throw error;
       setTasks(data || []);
-
-    } catch (error) {
-      console.error('Görev yükleme hatası:', error);
-      toast.error("Görevler yüklenemedi.");
+    } catch (error: any) {
+      toast.error("Program yüklenemedi.");
     } finally {
       setLoading(false);
     }
@@ -63,212 +60,131 @@ export default function StudentProgram() {
     fetchTasks();
   }, [fetchTasks]);
 
-  const handleTaskClick = (task: any) => {
-    if (task.status === 'completed') {
-      // Zaten tamamlanmışsa geri al (opsiyonel)
-      toggleTaskStatus(task.id, 'pending');
-    } else {
-      // Tamamlanmamışsa not modalını aç
-      setSelectedTask(task);
-      setIsNoteModalOpen(true);
+  const handleTaskAction = async (taskId: string, newStatus: string, note?: string) => {
+    try {
+      const { error } = await supabase
+        .from('student_tasks')
+        .update({
+          status: newStatus,
+          student_note: note || null,
+          completed_at: newStatus === 'completed' ? new Date().toISOString() : null
+        })
+        .eq('id', taskId);
+
+      if (error) throw error;
+      toast.success(newStatus === 'completed' ? "Görev tamamlandı! 🎉" : "Geri alındı.");
+      setIsNoteModalOpen(false);
+      setCompletionNote('');
+      fetchTasks(); 
+    } catch (error) {
+      toast.error("İşlem başarısız.");
     }
   };
 
-  const toggleTaskStatus = async (taskId: string, newStatus: string, note?: string) => {
-  try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return toast.error("Oturum bulunamadı.");
-
-    // 1. Görevi Güncelle
-    const { error: updateError } = await supabase
-      .from('student_tasks')
-      .update({ 
-        status: newStatus,
-        student_note: note || null,
-        // completed_at sütunu yoksa hata almamak için şimdilik göndermeyebilirsin 
-        // ama SQL'i çalıştırdıysan kalsın:
-        completed_at: newStatus === 'completed' ? new Date().toISOString() : null
-      })
-      .eq('id', taskId);
-
-    if (updateError) throw updateError;
-
-    // 2. Eğer tamamlandıysa Koça Bildirim Gönder
-    if (newStatus === 'completed') {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('coach_id, full_name')
-        .eq('id', user.id)
-        .single();
-      
-      if (profile?.coach_id) {
-        await supabase.from('notifications').insert([{
-          user_id: profile.coach_id,
-          title: "Ödev Tamamlandı! ✅",
-          message: `${profile.full_name}, "${selectedTask?.topic_name || 'Bir ödev'}" ödevini bitirdi. ${note ? 'Not: ' + note : ''}`,
-          type: 'success',
-          is_read: false
-        }]);
-      }
-      toast.success("Tebrikler! Görev koçuna bildirildi. 🎉");
-    } else {
-      toast.success("Görev durumu güncellendi.");
-    }
-
-    setIsNoteModalOpen(false);
-    setCompletionNote('');
-    fetchTasks(); // Listeyi yenile
-  } catch (error: any) {
-    console.error('Update Error:', error);
-    toast.error("İşlem başarısız oldu: " + (error.message || "Bilinmeyen hata"));
-  }
-};
-
-  if (loading) return <div className="flex h-screen items-center justify-center bg-slate-50 font-black text-blue-600 animate-pulse italic uppercase tracking-widest text-xs">ANALİZ EDİLİYOR...</div>;
-
-  // Aktif güne ait görevleri filtrele
-  const currentDayTasks = tasks.filter(task => {
-    const taskDate = new Date(task.due_date);
-    const selectedDayDate = weekDays[DAYS.indexOf(activeDay)];
-    return isSameDay(taskDate, selectedDayDate);
-  });
+  if (loading) return <div className="h-screen flex items-center justify-center font-black text-blue-600 animate-pulse text-xs uppercase italic tracking-[0.3em]">Haftalık Plan Yükleniyor...</div>;
 
   return (
-    <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-8 bg-slate-50 min-h-screen text-slate-900 font-sans pb-32">
+    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-8 bg-slate-50 min-h-screen text-slate-900 pb-32">
       
-      {/* Header Kısmı */}
-      <div className="bg-white p-10 rounded-[3rem] shadow-sm border border-slate-100 flex flex-col md:flex-row justify-between items-center gap-6 relative overflow-hidden">
-        <div className="absolute top-0 right-0 p-8 opacity-5"><Calendar size={120} /></div>
-        <div className="flex items-center gap-6 relative z-10">
-          <div className="p-5 bg-blue-600 rounded-[2rem] text-white shadow-xl shadow-blue-100 rotate-3"><Calendar size={32} /></div>
+      {/* Üst Navigasyon & Hafta Seçici */}
+      <div className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100 flex flex-col md:flex-row justify-between items-center gap-6">
+        <div className="flex items-center gap-6">
+          <div className="p-4 bg-slate-900 text-white rounded-2xl shadow-xl rotate-3"><Calendar size={28} /></div>
           <div>
-            <h1 className="text-3xl font-black italic tracking-tighter uppercase leading-none">Haftalık Planım</h1>
-            <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest italic mt-2 opacity-70">Bugün: {format(new Date(), 'dd MMMM yyyy', { locale: tr })}</p>
+            <h1 className="text-2xl font-black italic uppercase tracking-tighter leading-none">Haftalık Programım</h1>
+            <p className="text-blue-600 font-bold text-[10px] uppercase tracking-widest mt-2 italic">
+              {format(weekDays[0], 'dd MMM')} - {format(weekDays[6], 'dd MMM yyyy', { locale: tr })}
+            </p>
           </div>
         </div>
-        <div className="bg-slate-900 px-8 py-5 rounded-[2rem] text-center shadow-2xl relative z-10">
-           <p className="text-[10px] font-black text-blue-400 uppercase mb-1 italic tracking-widest">Kalan Görevler</p>
-           <p className="text-3xl font-black text-white italic leading-none">{currentDayTasks.filter(t => t.status !== 'completed').length}</p>
+        
+        <div className="flex items-center bg-slate-100 p-2 rounded-2xl gap-2">
+          <Button onClick={() => setCurrentWeekStart(subWeeks(currentWeekStart, 1))} variant="ghost" className="h-12 w-12 rounded-xl bg-white shadow-sm hover:bg-slate-900 hover:text-white transition-all">
+            <ChevronLeft size={20} />
+          </Button>
+          <div className="px-4 text-[10px] font-black uppercase tracking-widest text-slate-500">Hafta Değiştir</div>
+          <Button onClick={() => setCurrentWeekStart(addWeeks(currentWeekStart, 1))} variant="ghost" className="h-12 w-12 rounded-xl bg-white shadow-sm hover:bg-slate-900 hover:text-white transition-all">
+            <ChevronRight size={20} />
+          </Button>
         </div>
       </div>
 
-      {/* Gün Seçici (Tarihlerle Birlikte) */}
-      <div className="flex gap-3 overflow-x-auto pb-6 no-scrollbar">
+      {/* 7 GÜNLÜK GRID GÖRÜNÜMÜ */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-4">
         {weekDays.map((date, index) => {
-          const dayName = DAYS[index];
-          const isActive = activeDay === dayName;
+          const dateStr = format(date, 'yyyy-MM-dd');
+          const dayTasks = tasks.filter(t => t.due_date === dateStr);
+          const isToday = isSameDay(date, new Date());
+
           return (
-            <button 
-              key={dayName} 
-              onClick={() => setActiveDay(dayName)} 
-              className={`flex flex-col items-center min-w-[100px] px-6 py-5 rounded-[2rem] transition-all border-2 ${
-                isActive 
-                ? "bg-slate-900 text-white border-slate-900 shadow-2xl scale-105" 
-                : "bg-white text-slate-400 border-transparent hover:border-blue-100 hover:bg-blue-50/30 shadow-sm"
-              }`}
-            >
-              <span className="text-[9px] font-black uppercase tracking-[0.2em] mb-1">{dayName.substring(0, 3)}</span>
-              <span className="text-lg font-black italic tracking-tighter">{format(date, 'dd')}</span>
-            </button>
+            <div key={index} className={`flex flex-col gap-4 min-h-[500px] p-4 rounded-[2.5rem] transition-all ${isToday ? 'bg-blue-50/50 ring-2 ring-blue-100' : 'bg-slate-100/30'}`}>
+              {/* Gün Başlığı */}
+              <div className={`p-5 rounded-[2rem] text-center shadow-sm ${isToday ? 'bg-slate-900 text-white shadow-blue-100' : 'bg-white text-slate-400'}`}>
+                <p className="text-[9px] font-black uppercase tracking-[0.2em] mb-1">{DAYS[index].substring(0, 3)}</p>
+                <p className="text-2xl font-black italic tracking-tighter leading-none">{format(date, 'dd')}</p>
+              </div>
+
+              {/* Günlük Görevler */}
+              <div className="space-y-3 flex-1">
+                {dayTasks.length > 0 ? (
+                  dayTasks.map((task) => (
+                    <Card
+                      key={task.id}
+                      onClick={() => {
+                        if (task.status === 'completed') handleTaskAction(task.id, 'pending');
+                        else { setSelectedTask(task); setIsNoteModalOpen(true); }
+                      }}
+                      className={`group rounded-3xl border-none shadow-sm cursor-pointer transition-all hover:scale-[1.03] ${
+                        task.status === 'completed' ? 'bg-emerald-50 opacity-60' : 'bg-white hover:shadow-xl'
+                      }`}
+                    >
+                      <CardContent className="p-5 flex flex-col gap-4">
+                        <div className="flex justify-between items-start">
+                          <div className={`p-2 rounded-xl ${task.status === 'completed' ? 'bg-emerald-500 text-white' : 'bg-slate-50 text-slate-300 group-hover:text-blue-600'}`}>
+                            {task.status === 'completed' ? <Check size={14} strokeWidth={4} /> : <Target size={14} />}
+                          </div>
+                          <span className="text-[14px] font-black italic text-slate-900">{task.target_questions} <span className="text-[8px] uppercase not-italic text-slate-400">Soru</span></span>
+                        </div>
+                        <h4 className={`text-[11px] font-black uppercase leading-tight tracking-tight ${task.status === 'completed' ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
+                          {task.topic_name}
+                        </h4>
+                        {task.student_note && (
+                          <div className="pt-2 border-t border-slate-100">
+                             <p className="text-[8px] font-bold text-slate-400 italic line-clamp-1">"{task.student_note}"</p>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center opacity-10 py-10">
+                    <Circle size={32} className="mb-2" />
+                    <span className="text-[8px] font-black uppercase tracking-widest">Boş</span>
+                  </div>
+                )}
+              </div>
+            </div>
           );
         })}
       </div>
 
-      {/* Görev Listesi */}
-      <div className="space-y-4">
-        {currentDayTasks.length === 0 ? (
-          <Card className="rounded-[3.5rem] border-none shadow-sm p-32 text-center bg-white border border-dashed border-slate-200">
-            <LayoutGrid size={64} className="mx-auto text-slate-100 mb-6 opacity-50" />
-            <p className="text-slate-300 font-black italic uppercase tracking-widest text-xs">Bu tarih için atanmış ödevin bulunmuyor.</p>
-          </Card>
-        ) : (
-          currentDayTasks.map((task) => (
-            <Card 
-              key={task.id} 
-              onClick={() => handleTaskClick(task)}
-              className={`rounded-[2.5rem] border-none shadow-sm transition-all cursor-pointer relative overflow-hidden group border border-transparent ${
-                task.status === 'completed' 
-                ? "bg-emerald-50/40 border-emerald-100 opacity-80" 
-                : "bg-white hover:shadow-2xl hover:scale-[1.01] hover:border-blue-100"
-              }`}
-            >
-              <CardContent className="p-8 flex flex-col md:flex-row items-center justify-between gap-6">
-                <div className="flex items-center gap-8 flex-1">
-                  <div className={`transition-all duration-500 ${task.status === 'completed' ? "text-emerald-500 rotate-[360deg]" : "text-slate-200 group-hover:text-blue-500"}`}>
-                    {task.status === 'completed' 
-                      ? <div className="bg-emerald-500 p-3 rounded-full text-white shadow-lg shadow-emerald-100"><Check size={28} strokeWidth={4} /></div> 
-                      : <Circle size={48} strokeWidth={2.5} />
-                    }
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-3">
-                      <span className={`px-4 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${
-                        task.status === 'completed' ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-blue-50 text-blue-700 border-blue-100"
-                      }`}>{task.topic_name.split('-')[0]}</span>
-                      {task.student_note && <MessageSquare size={14} className="text-blue-400 animate-pulse" />}
-                    </div>
-                    <h3 className={`text-2xl font-black tracking-tighter italic uppercase ${task.status === 'completed' ? "text-slate-400 line-through opacity-50" : "text-slate-900"}`}>
-                      {task.topic_name.split('-')[1] || task.topic_name}
-                    </h3>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-10 w-full md:w-auto border-t md:border-t-0 pt-6 md:pt-0 border-slate-50">
-                  <div className="text-right">
-                    <p className="text-3xl font-black text-slate-900 tracking-tighter leading-none">
-                      {task.target_questions} <span className="text-[10px] font-bold text-slate-400 ml-1 uppercase italic tracking-widest">Soru</span>
-                    </p>
-                    <p className="text-[9px] font-black text-slate-300 uppercase tracking-[0.2em] mt-2">Hedeflenen</p>
-                  </div>
-                  <div className={`px-8 py-4 rounded-2xl font-black text-[10px] uppercase border tracking-[0.2em] transition-all ${
-                    task.status === 'completed' 
-                    ? "bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-100" 
-                    : "bg-slate-900 text-white border-slate-900 group-hover:bg-blue-600 group-hover:border-blue-600 shadow-xl"
-                  }`}>
-                    {task.status === 'completed' ? "BİTTİ" : "TAMAMLA"}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))
-        )}
-      </div>
-
-      {/* Tamamlama Notu Modalı */}
+      {/* Onay Modalı */}
       <Dialog open={isNoteModalOpen} onOpenChange={setIsNoteModalOpen}>
-        <DialogContent className="sm:max-w-[500px] rounded-[3rem] p-0 overflow-hidden border-none shadow-2xl">
-          <div className="bg-slate-900 p-10 text-white relative overflow-hidden">
-             <div className="absolute top-[-20px] right-[-20px] opacity-10 rotate-12"><Sparkles size={120} /></div>
-             <DialogHeader>
-                <DialogTitle className="text-2xl font-black italic uppercase tracking-tighter flex items-center gap-3">
-                   <CheckCircle2 className="text-blue-400" /> Görevi Bitir
-                </DialogTitle>
-                <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1 opacity-70 italic">Koçuna performansın hakkında bilgi ver</p>
-             </DialogHeader>
+        <DialogContent className="sm:max-w-[450px] rounded-[3rem] p-0 overflow-hidden border-none shadow-2xl bg-white">
+          <div className="bg-slate-900 p-8 text-white relative">
+             <div className="absolute top-0 right-0 p-4 opacity-10 rotate-12"><Sparkles size={100} /></div>
+             <DialogTitle className="text-xl font-black italic uppercase tracking-tighter">Görevi Tamamla</DialogTitle>
           </div>
-          <div className="p-10 space-y-6 bg-white">
-             <div className="space-y-3">
-                <label className="text-[10px] font-black uppercase text-slate-400 ml-2 tracking-widest italic">Öğrenci Notu (Opsiyonel)</label>
-                <Textarea 
-                  placeholder="Örn: Sorular biraz zordu ama hepsini bitirdim. / 20 soru eksik kaldı..."
-                  className="min-h-[120px] rounded-[1.5rem] bg-slate-50 border-none font-bold p-6 focus-visible:ring-2 ring-blue-500/20 transition-all text-sm"
-                  value={completionNote}
-                  onChange={(e) => setCompletionNote(e.target.value)}
-                />
-             </div>
-             <div className="flex gap-3">
-                <Button 
-                  onClick={() => setIsNoteModalOpen(false)} 
-                  variant="ghost" 
-                  className="flex-1 h-14 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-red-50 hover:text-red-500 transition-all"
-                >İptal</Button>
-                <Button 
-                  onClick={() => toggleTaskStatus(selectedTask.id, 'completed', completionNote)}
-                  className="flex-[2] h-14 bg-blue-600 hover:bg-slate-900 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl shadow-blue-100 flex items-center justify-center gap-2"
-                >
-                   Görevi Tamamla <Send size={16} />
-                </Button>
-             </div>
+          <div className="p-8 space-y-6">
+            <Textarea
+              placeholder="Koçuna bir not bırakmak ister misin? (Opsiyonel)"
+              className="min-h-[120px] rounded-2xl bg-slate-50 border-none font-bold p-5 outline-none focus:ring-2 ring-blue-500/20 text-sm shadow-inner"
+              value={completionNote}
+              onChange={(e) => setCompletionNote(e.target.value)}
+            />
+            <Button onClick={() => handleTaskAction(selectedTask.id, 'completed', completionNote)} className="w-full h-16 bg-blue-600 hover:bg-slate-900 text-white rounded-2xl font-black uppercase text-xs shadow-xl shadow-blue-100 flex items-center justify-center gap-2 transition-all">
+              <Send size={18} /> GÖREVİ BİTİR VE GÖNDER
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

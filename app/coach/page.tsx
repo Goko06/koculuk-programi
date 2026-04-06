@@ -26,6 +26,7 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
+import { isAdminCoach } from '@/lib/roles';
 
 interface Student { 
   id: string; 
@@ -44,11 +45,28 @@ interface Exam {
   created_at: string; 
   exam_type: 'LGS' | 'TYT' | 'AYT';
 }
+interface CoachOption {
+  id: string;
+  full_name: string;
+  status?: 'active' | 'archived' | 'deleted';
+}
+interface CoachSummary extends CoachOption {
+  studentCount: number;
+  activeCount: number;
+  archivedCount: number;
+  deletedCount: number;
+}
 const supabase = createClient();
 export default function CoachPage() {
   const [students, setStudents] = useState<Student[]>([]);
   const [allExams, setAllExams] = useState<Exam[]>([]);
   const [coachName, setCoachName] = useState<string>("");
+  const [currentCoachId, setCurrentCoachId] = useState<string>("");
+  const [isAdminView, setIsAdminView] = useState(false);
+  const [coaches, setCoaches] = useState<CoachOption[]>([]);
+  const [coachSummaries, setCoachSummaries] = useState<CoachSummary[]>([]);
+  const [selectedCoachId, setSelectedCoachId] = useState<string>("");
+  const [adminTab, setAdminTab] = useState<'students' | 'coaches'>('students');
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [viewMode, setViewMode] = useState<'active' | 'archived' | 'deleted'>('active'); // Filtre state
@@ -57,6 +75,13 @@ export default function CoachPage() {
   const [formData, setFormData] = useState({
     fullName: '', email: '', phone: '', password: '', classLevel: '', branch: ''
   });
+  const [coachForm, setCoachForm] = useState({
+    fullName: '',
+    email: '',
+    phone: '',
+    password: '',
+  });
+  const [isCoachModalOpen, setIsCoachModalOpen] = useState(false);
 
   
   const router = useRouter();
@@ -67,13 +92,16 @@ export default function CoachPage() {
       const { data: authData } = await supabase.auth.getUser();
       const user = authData?.user;
       if (!user) return;
+      setCurrentCoachId(user.id);
 
       const { data: coachProfile } = await supabase
         .from('profiles')
-        .select('full_name')
+        .select('full_name, role')
         .eq('id', user.id)
         .single();
       
+      const adminMode = isAdminCoach(coachProfile);
+      setIsAdminView(adminMode);
       if (coachProfile) setCoachName(coachProfile.full_name);
       
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
@@ -82,13 +110,53 @@ export default function CoachPage() {
         return;
       }
 
-      const { data: sData } = await supabase.from('profiles')
+      const studentQuery = supabase
+        .from('profiles')
         .select('*')
-        .eq('coach_id', user.id)
         .eq('role', 'student')
         .order('full_name', { ascending: true });
+
+      const { data: sData } = adminMode
+        ? await studentQuery
+        : await studentQuery.eq('coach_id', user.id);
       
       const currentStudents = (sData as any[]) || [];
+
+      const coachesQuery = supabase
+        .from('profiles')
+        .select('id, full_name, status')
+        .eq('role', 'coach')
+        .order('full_name', { ascending: true });
+      const { data: coachList } = adminMode
+        ? await coachesQuery.eq('coach_id', user.id)
+        : await coachesQuery.eq('id', user.id)
+      ;
+      const safeCoachList = ((coachList as CoachOption[]) || []).filter((c) => c.id !== user.id);
+      setCoaches(safeCoachList);
+      if (!selectedCoachId) setSelectedCoachId(user.id);
+
+      if (adminMode && safeCoachList.length > 0) {
+        const coachIds = safeCoachList.map((c) => c.id);
+        const { data: allStudentsForCoaches } = await supabase
+          .from('profiles')
+          .select('id, coach_id, status')
+          .eq('role', 'student')
+          .in('coach_id', coachIds);
+
+        const summaryMap = safeCoachList.map((coach) => {
+          const studentsOfCoach = (allStudentsForCoaches || []).filter((s) => s.coach_id === coach.id);
+          return {
+            ...coach,
+            studentCount: studentsOfCoach.length,
+            activeCount: studentsOfCoach.filter((s) => (s as { status?: string }).status === 'active').length,
+            archivedCount: studentsOfCoach.filter((s) => (s as { status?: string }).status === 'archived').length,
+            deletedCount: studentsOfCoach.filter((s) => (s as { status?: string }).status === 'deleted').length,
+          };
+        });
+        setCoachSummaries(summaryMap);
+      } else {
+        setCoachSummaries([]);
+      }
 
       if (currentStudents.length > 0) {
         const { data: eData } = await supabase.from('exams').select('student_id, total_net, created_at, exam_type').in('student_id', currentStudents.map(s => s.id));
@@ -117,7 +185,7 @@ export default function CoachPage() {
     } finally {
       setLoading(false);
     }
-  }, [supabase, router]);
+  }, [supabase, router, selectedCoachId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -148,10 +216,17 @@ export default function CoachPage() {
     setIsSubmitting(true);
     const { data: auth } = await supabase.auth.getUser();
     try {
+      const targetCoachId = isAdminView ? selectedCoachId : auth.user?.id;
+      if (!targetCoachId) {
+        toast.error("Koç seçimi zorunlu.");
+        setIsSubmitting(false);
+        return;
+      }
+
       const res = await fetch('/api/create-student', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formData, coachId: auth.user?.id }),
+        body: JSON.stringify({ ...formData, coachId: targetCoachId }),
       });
       const result = await res.json();
       if (result.success) {
@@ -169,7 +244,55 @@ export default function CoachPage() {
     }
   };
 
+  const handleCreateCoach = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    try {
+      const { data: auth } = await supabase.auth.getUser();
+      const res = await fetch('/api/create-coach', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...coachForm,
+          parentAdminId: auth.user?.id,
+        }),
+      });
+      const result = await res.json();
+      if (!res.ok || !result.success) throw new Error(result.error || 'Koç oluşturulamadı');
+      toast.success('Alt koç başarıyla eklendi.');
+      setCoachForm({ fullName: '', email: '', phone: '', password: '' });
+      setIsCoachModalOpen(false);
+      fetchData();
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : 'Koç oluşturulamadı.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const updateCoachStatus = async (coachId: string, newStatus: 'active' | 'archived' | 'deleted') => {
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ status: newStatus })
+        .eq('id', coachId)
+        .eq('role', 'coach');
+      if (error) throw error;
+      toast.success("Koç durumu güncellendi.");
+      fetchData();
+    } catch (error) {
+      console.error(error);
+      toast.error("Koç durumu güncellenemedi.");
+    }
+  };
+
   const criticalStudentsList = students.filter(s => s.hasDrop && s.status === 'active');
+  const assignableCoaches: CoachOption[] = isAdminView
+    ? [
+        ...(currentCoachId ? [{ id: currentCoachId, full_name: `${coachName || 'Ana Koç'} (Ben)` }] : []),
+        ...[...coaches].sort((a, b) => a.full_name.localeCompare(b.full_name, 'tr')),
+      ]
+    : [...coaches].sort((a, b) => a.full_name.localeCompare(b.full_name, 'tr'));
   
   // Arama ve Filtreleme (active/archived/deleted)
   const filtered = students.filter(s => 
@@ -180,35 +303,71 @@ export default function CoachPage() {
   if (loading) return <div className="h-screen flex items-center justify-center font-black text-blue-600 animate-pulse text-xs uppercase italic">Yükleniyor...</div>;
 
   return (
-    <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-8 bg-slate-50 min-h-screen text-slate-900 pb-32">
+    <div className="p-4 md:p-8 max-w-[1500px] mx-auto space-y-8 bg-slate-50 min-h-screen text-slate-900 pb-32">
       {/* Header */}
-      <div className="flex flex-col lg:flex-row justify-between items-center bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 gap-6">
-        <div className="flex items-center gap-5">
-          <div className="p-4 bg-slate-900 rounded-2xl text-white shadow-lg rotate-3"><LayoutGrid size={28} /></div>
-          <div>
-            <h1 className="text-3xl font-black italic tracking-tighter uppercase leading-none">
-              {coachName || "Koç Paneli"}
-            </h1>
-            <p className="text-slate-400 font-bold text-[9px] uppercase tracking-widest mt-1 italic">Öğrencilerim</p>
+      <div className="bg-white p-6 md:p-8 rounded-[2.5rem] shadow-sm border border-slate-100 space-y-5">
+        <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5">
+          <div className="flex items-center gap-5 min-w-0">
+            <div className="p-4 bg-slate-900 rounded-2xl text-white shadow-lg rotate-3"><LayoutGrid size={28} /></div>
+            <div className="min-w-0">
+              <h1 className="text-2xl md:text-3xl font-black italic tracking-tighter uppercase leading-none truncate">
+                {coachName || "Koç Paneli"}
+              </h1>
+              <p className="text-slate-400 font-bold text-[9px] uppercase tracking-widest mt-2 italic">
+                {isAdminView ? "Admin Koç Kontrol Merkezi" : "Öğrencilerim"}
+              </p>
+            </div>
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-center gap-4 w-full lg:w-auto">
-          {/* Görünüm Filtreleri */}
-          <div className="flex bg-slate-100 p-1.5 rounded-2xl gap-1">
-            <button onClick={() => setViewMode('active')} className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${viewMode === 'active' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>Aktif</button>
-            <button onClick={() => setViewMode('archived')} className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${viewMode === 'archived' ? 'bg-white shadow-sm text-amber-600' : 'text-slate-400 hover:text-slate-600'}`}>Arşiv</button>
-            <button onClick={() => setViewMode('deleted')} className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${viewMode === 'deleted' ? 'bg-white shadow-sm text-red-600' : 'text-slate-400 hover:text-slate-600'}`}>Silinenler</button>
+        <div className="flex flex-col xl:flex-row xl:items-center gap-4">
+          <div className="flex flex-wrap items-center gap-3 flex-1">
+            {isAdminView && (
+              <div className="flex bg-slate-100 p-1.5 rounded-2xl gap-1">
+                <button
+                  onClick={() => setAdminTab('students')}
+                  className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${adminTab === 'students' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}
+                >
+                  Öğrencilerim
+                </button>
+                <button
+                  onClick={() => setAdminTab('coaches')}
+                  className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${adminTab === 'coaches' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-400 hover:text-slate-600'}`}
+                >
+                  Koçlarım
+                </button>
+              </div>
+            )}
+
+            {(!isAdminView || adminTab === 'students') && (
+              <div className="flex bg-slate-100 p-1.5 rounded-2xl gap-1">
+                <button onClick={() => setViewMode('active')} className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${viewMode === 'active' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}>Aktif</button>
+                <button onClick={() => setViewMode('archived')} className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${viewMode === 'archived' ? 'bg-white shadow-sm text-amber-600' : 'text-slate-400 hover:text-slate-600'}`}>Arşiv</button>
+                <button onClick={() => setViewMode('deleted')} className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${viewMode === 'deleted' ? 'bg-white shadow-sm text-red-600' : 'text-slate-400 hover:text-slate-600'}`}>Silinenler</button>
+              </div>
+            )}
+
+            {(!isAdminView || adminTab === 'students') && (
+              <div className="relative w-full md:w-[22rem]">
+                <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                <input type="text" placeholder="Öğrenci ara..." className="w-full pl-12 pr-6 h-12 md:h-14 bg-slate-50 border-none rounded-2xl font-bold text-sm outline-none focus:ring-2 ring-blue-500/20" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+              </div>
+            )}
           </div>
 
-          <div className="relative w-full sm:w-72">
-            <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
-            <input type="text" placeholder="Öğrenci ara..." className="w-full pl-12 pr-6 h-14 bg-slate-50 border-none rounded-2xl font-bold text-sm outline-none focus:ring-2 ring-blue-500/20" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-          </div>
-
-          <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full xl:w-auto">
+          {(!isAdminView || adminTab === 'students') && (
+          <Dialog
+            open={isModalOpen}
+            onOpenChange={(open) => {
+              setIsModalOpen(open);
+              if (open) {
+                setFormData({ fullName: '', email: '', phone: '', password: '', classLevel: '', branch: '' });
+              }
+            }}
+          >
             <DialogTrigger asChild>
-              <Button className="bg-blue-600 hover:bg-slate-900 rounded-2xl font-black px-8 h-14 text-white uppercase tracking-widest text-[10px] shadow-lg shadow-blue-100 transition-all">
+              <Button className="bg-blue-600 hover:bg-slate-900 rounded-2xl font-black px-6 h-12 md:h-14 text-white uppercase tracking-widest text-[10px] shadow-lg shadow-blue-100 transition-all whitespace-nowrap">
                 <UserPlus size={18} className="mr-2" /> Yeni Öğrenci
               </Button>
             </DialogTrigger>
@@ -224,6 +383,23 @@ export default function CoachPage() {
               </div>
               <form onSubmit={handleCreateStudent} className="p-10 space-y-6">
                 <div className="space-y-4">
+                  {isAdminView && (
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase text-slate-400 ml-2 tracking-widest italic">Atanacak Koç</label>
+                      <Select value={selectedCoachId} onValueChange={setSelectedCoachId}>
+                        <SelectTrigger className="h-14 rounded-2xl bg-slate-50 border-none font-bold">
+                          <SelectValue placeholder="Koç seçiniz" />
+                        </SelectTrigger>
+                        <SelectContent className="rounded-2xl border border-slate-100 shadow-2xl bg-white z-[100]">
+                          {assignableCoaches.map((coach, index) => (
+                            <SelectItem key={coach.id} value={coach.id} className="font-bold py-3">
+                              {index === 0 && isAdminView ? `Ana Koç - ${coach.full_name}` : `Alt Koç - ${coach.full_name}`}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   <div className="relative group">
                     <Users className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-blue-500 transition-colors" size={18} />
                     <Input placeholder="Ad Soyad" required value={formData.fullName} onChange={e => setFormData({...formData, fullName: e.target.value})} className="h-14 pl-12 rounded-2xl bg-slate-50 border-none font-bold" />
@@ -235,12 +411,12 @@ export default function CoachPage() {
                     </div>
                     <div className="relative group">
                       <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-blue-500 transition-colors" size={18} />
-                      <Input placeholder="Telefon" required value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="h-14 pl-12 rounded-2xl bg-slate-50 border-none font-bold" />
+                      <Input autoComplete="off" placeholder="Telefon" required value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} className="h-14 pl-12 rounded-2xl bg-slate-50 border-none font-bold" />
                     </div>
                   </div>
                   <div className="relative group">
                     <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-blue-500 transition-colors" size={18} />
-                    <Input type="password" placeholder="Şifre" required value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="h-14 pl-12 rounded-2xl bg-slate-50 border-none font-bold" />
+                    <Input autoComplete="new-password" type="password" placeholder="Şifre" required value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="h-14 pl-12 rounded-2xl bg-slate-50 border-none font-bold" />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
@@ -279,10 +455,49 @@ export default function CoachPage() {
               </form>
             </DialogContent>
           </Dialog>
+          )}
+
+          {isAdminView && (
+            <Dialog
+              open={isCoachModalOpen}
+              onOpenChange={(open) => {
+                setIsCoachModalOpen(open);
+                if (!open) {
+                  setCoachForm({ fullName: '', email: '', phone: '', password: '' });
+                }
+              }}
+            >
+              <DialogTrigger asChild>
+                <Button className="bg-slate-900 hover:bg-blue-600 rounded-2xl font-black px-6 h-12 md:h-14 text-white uppercase tracking-widest text-[10px] shadow-lg transition-all whitespace-nowrap">
+                  <UserPlus size={18} className="mr-2" /> Alt Koç Ekle
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-[550px] rounded-[3rem] p-0 overflow-hidden border-none shadow-2xl bg-white">
+                <div className="bg-slate-900 p-10 text-white relative overflow-hidden">
+                  <DialogHeader>
+                    <DialogTitle className="text-3xl font-black italic uppercase tracking-tighter">
+                      Alt Koç Oluştur
+                    </DialogTitle>
+                  </DialogHeader>
+                </div>
+                <form onSubmit={handleCreateCoach} className="p-10 space-y-4">
+                  <Input autoComplete="off" placeholder="Ad Soyad" required value={coachForm.fullName} onChange={(e) => setCoachForm({ ...coachForm, fullName: e.target.value })} className="h-14 rounded-2xl bg-slate-50 border-none font-bold" />
+                  <Input autoComplete="off" type="email" placeholder="E-posta" required value={coachForm.email} onChange={(e) => setCoachForm({ ...coachForm, email: e.target.value })} className="h-14 rounded-2xl bg-slate-50 border-none font-bold" />
+                  <Input autoComplete="off" placeholder="Telefon" required value={coachForm.phone} onChange={(e) => setCoachForm({ ...coachForm, phone: e.target.value })} className="h-14 rounded-2xl bg-slate-50 border-none font-bold" />
+                  <Input autoComplete="new-password" type="password" placeholder="Şifre" required value={coachForm.password} onChange={(e) => setCoachForm({ ...coachForm, password: e.target.value })} className="h-14 rounded-2xl bg-slate-50 border-none font-bold" />
+                  <Button type="submit" disabled={isSubmitting} className="w-full h-14 bg-blue-600 hover:bg-slate-900 rounded-[1.5rem] font-black uppercase tracking-[0.2em] text-xs">
+                    {isSubmitting ? "Kaydediliyor..." : "Koçu Oluştur"}
+                  </Button>
+                </form>
+              </DialogContent>
+            </Dialog>
+          )}
+          </div>
         </div>
       </div>
 
       {/* İstatistikler */}
+      {(!isAdminView || adminTab === 'students') && (
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <Card className="p-6 rounded-[2rem] border-none shadow-sm bg-white flex flex-col items-center justify-center text-center">
           <div className="p-3 bg-slate-100 rounded-xl mb-3 text-slate-600"><Users size={20} /></div>
@@ -318,8 +533,10 @@ export default function CoachPage() {
           )}
         </div>
       </div>
+      )}
 
       {/* Öğrenci Listesi */}
+      {(!isAdminView || adminTab === 'students') && (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filtered.map((s) => (
           <Card key={s.id} onClick={() => router.push(`/coach/student/${s.id}`)} className="relative bg-white border-none shadow-sm rounded-[2rem] hover:shadow-xl transition-all duration-300 group cursor-pointer overflow-hidden border border-transparent hover:border-blue-100">
@@ -356,10 +573,71 @@ export default function CoachPage() {
           </Card>
         ))}
       </div>
+      )}
       
-      {filtered.length === 0 && (
+      {(!isAdminView || adminTab === 'students') && filtered.length === 0 && (
         <div className="text-center py-20 bg-white rounded-[2rem] border border-dashed border-slate-200">
            <p className="text-slate-400 font-bold uppercase italic text-xs tracking-[0.2em]">Bu bölümde kayıtlı öğrenci bulunamadı.</p>
+        </div>
+      )}
+
+      {isAdminView && adminTab === 'coaches' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
+          {coachSummaries.map((coach) => (
+            <Card key={coach.id} className="bg-white border-none shadow-sm rounded-[2rem] p-6">
+              <div className="flex items-center gap-3 mb-5">
+                <div className="w-12 h-12 bg-slate-900 rounded-xl flex items-center justify-center font-black text-white">
+                  {coach.full_name.charAt(0)}
+                </div>
+                <div>
+                  <h3 className="text-md font-black italic text-slate-800 leading-tight uppercase">{coach.full_name}</h3>
+                  <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">
+                    {(coach.status || 'active') === 'archived' ? 'Arşivde' : (coach.status || 'active') === 'deleted' ? 'Silinmiş' : 'Aktif Koç'}
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-center">
+                <div className="bg-slate-50 rounded-xl p-3">
+                  <p className="text-[8px] font-black uppercase tracking-widest text-slate-400">Toplam</p>
+                  <p className="text-2xl font-black text-slate-900">{coach.studentCount}</p>
+                </div>
+                <div className="bg-blue-50 rounded-xl p-3">
+                  <p className="text-[8px] font-black uppercase tracking-widest text-blue-400">Aktif</p>
+                  <p className="text-2xl font-black text-blue-700">{coach.activeCount}</p>
+                </div>
+                <div className="bg-amber-50 rounded-xl p-3">
+                  <p className="text-[8px] font-black uppercase tracking-widest text-amber-500">Arşiv</p>
+                  <p className="text-2xl font-black text-amber-700">{coach.archivedCount}</p>
+                </div>
+                <div className="bg-red-50 rounded-xl p-3">
+                  <p className="text-[8px] font-black uppercase tracking-widest text-red-400">Silinen</p>
+                  <p className="text-2xl font-black text-red-700">{coach.deletedCount}</p>
+                </div>
+              </div>
+              <div className="mt-4 flex gap-2">
+                <Button
+                  onClick={() => updateCoachStatus(coach.id, (coach.status || 'active') === 'archived' ? 'active' : 'archived')}
+                  className="flex-1 h-10 rounded-xl bg-amber-50 text-amber-700 hover:bg-amber-100 shadow-none border-none text-[10px] font-black uppercase tracking-wider"
+                >
+                  {(coach.status || 'active') === 'archived' ? <RotateCcw size={14} className="mr-1" /> : <Archive size={14} className="mr-1" />}
+                  {(coach.status || 'active') === 'archived' ? 'Geri Al' : 'Arşivle'}
+                </Button>
+                <Button
+                  onClick={() => updateCoachStatus(coach.id, (coach.status || 'active') === 'deleted' ? 'active' : 'deleted')}
+                  className="flex-1 h-10 rounded-xl bg-red-50 text-red-700 hover:bg-red-100 shadow-none border-none text-[10px] font-black uppercase tracking-wider"
+                >
+                  {(coach.status || 'active') === 'deleted' ? <RotateCcw size={14} className="mr-1" /> : <Trash2 size={14} className="mr-1" />}
+                  {(coach.status || 'active') === 'deleted' ? 'Geri Al' : 'Sil'}
+                </Button>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {isAdminView && adminTab === 'coaches' && coachSummaries.length === 0 && (
+        <div className="text-center py-20 bg-white rounded-[2rem] border border-dashed border-slate-200">
+           <p className="text-slate-400 font-bold uppercase italic text-xs tracking-[0.2em]">Henüz alt koç bulunmuyor.</p>
         </div>
       )}
     </div>

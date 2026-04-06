@@ -2,12 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { 
   Users, BookOpen, BarChart3, Settings, LogOut, Menu 
 } from 'lucide-react';
 import Image from 'next/image';
 import { createClient } from '@/lib/supabase/client';
+import { isAdminCoach } from '@/lib/roles';
 
 export default function CoachLayout({
   children,
@@ -15,7 +16,9 @@ export default function CoachLayout({
   children: React.ReactNode;
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [checkingAccess, setCheckingAccess] = useState(true);
   const pathname = usePathname();
+  const router = useRouter();
   const supabase = createClient();
 
   const menuItems = [
@@ -34,6 +37,45 @@ export default function CoachLayout({
     }
     window.location.href = '/login';
   };
+
+  useEffect(() => {
+    const checkCoachAccess = async () => {
+      try {
+        const { data: authData } = await supabase.auth.getUser();
+        const user = authData.user;
+        if (!user) {
+          router.push('/login');
+          return;
+        }
+
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('role, status, full_name')
+          .or(`id.eq.${user.id},user_id.eq.${user.id}`)
+          .single();
+
+        const status = profile?.status || 'active';
+        const isCoachLike = profile?.role === 'coach' || isAdminCoach(profile);
+        if (!isCoachLike) {
+          router.push('/login');
+          return;
+        }
+
+        if (status === 'archived' || status === 'deleted') {
+          await supabase.auth.signOut();
+          router.push('/login');
+          return;
+        }
+      } finally {
+        setCheckingAccess(false);
+      }
+    };
+    checkCoachAccess();
+  }, [router, supabase]);
+
+  if (checkingAccess) {
+    return <div className="h-screen flex items-center justify-center font-black text-blue-600 text-xs uppercase">Erişim kontrol ediliyor...</div>;
+  }
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">

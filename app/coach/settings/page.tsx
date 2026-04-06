@@ -13,11 +13,13 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
+import { isAdminCoach } from '@/lib/roles';
 
 export default function CoachSettings() {
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [user, setUser] = useState<any>(null);
+  const [isAdminView, setIsAdminView] = useState(false);
   const router = useRouter();
   const supabase = createClient();
 
@@ -36,7 +38,13 @@ export default function CoachSettings() {
       try {
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('role, full_name')
+            .eq('id', user.id)
+            .single();
           setUser(user);
+          setIsAdminView(isAdminCoach(profile));
           setProfileData({
             full_name: user.user_metadata?.full_name || '',
             email: user.email || '',
@@ -205,7 +213,9 @@ export default function CoachSettings() {
                  <div className="space-y-4">
                     <div className="flex justify-between items-center bg-white/5 p-4 rounded-2xl border border-white/10">
                        <span className="text-xs font-bold text-slate-400">Yetki Seviyesi</span>
-                       <span className="text-[10px] font-black bg-blue-600 px-3 py-1 rounded-lg uppercase">Eğitmen / Koç</span>
+                      <span className="text-[10px] font-black bg-blue-600 px-3 py-1 rounded-lg uppercase">
+                        {isAdminView ? 'Ana Admin Koç' : 'Eğitmen / Koç'}
+                      </span>
                     </div>
                     <div className="flex justify-between items-center bg-white/5 p-4 rounded-2xl border border-white/10">
                        <span className="text-xs font-bold text-slate-400">Kayıt Tarihi</span>

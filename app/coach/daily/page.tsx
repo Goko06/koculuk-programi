@@ -10,6 +10,7 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { isAdminCoach } from '@/lib/roles';
 
 interface DailyEntry {
   id: string;
@@ -35,11 +36,21 @@ export default function CoachDailyTrackingPage() {
       const { data: authData } = await supabase.auth.getUser();
       if (!authData?.user) return;
 
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role, full_name')
+        .eq('id', authData.user.id)
+        .single();
+
       // 1. Koça bağlı öğrencileri al
-      const { data: students } = await supabase
+      const studentsQuery = supabase
         .from('profiles')
         .select('id')
-        .eq('coach_id', authData.user.id);
+        .eq('role', 'student');
+
+      const { data: students } = isAdminCoach(profile)
+        ? await studentsQuery
+        : await studentsQuery.eq('coach_id', authData.user.id);
 
       if (!students || students.length === 0) return;
 

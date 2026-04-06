@@ -10,6 +10,7 @@ import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { Loader2, User, GraduationCap, ShieldCheck } from 'lucide-react';
+import { isAdminCoach } from '@/lib/roles';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -43,9 +44,9 @@ export default function LoginPage() {
       // 2. Kullanıcının rolünü profiles tablosundan al
       // Not: Eğer koç öğrenciyi eklerken profiles tablosuna kayıt atmıyorsa 
       // burayı 'students' tablosuna bakacak şekilde güncelleyebiliriz.
-      const { data: profile, error: profileError } = await supabase
+      const { data: profile } = await supabase
         .from('profiles')
-        .select('role')
+        .select('role, full_name')
         .eq('user_id', data.user.id)
         .single();
 
@@ -53,7 +54,7 @@ export default function LoginPage() {
       const userRole = profile?.role || 'student';
 
       // 3. Rol Kontrolü
-      if (selectedType === 'student' && userRole === 'coach') {
+      if (selectedType === 'student' && (userRole === 'coach' || isAdminCoach(profile))) {
         toast.error("Bu hesap bir Koç hesabıdır. Lütfen 'Koç Girişi' butonunu kullanın.");
         await supabase.auth.signOut();
         setIsLoading(false);
@@ -70,14 +71,14 @@ export default function LoginPage() {
       toast.success(`Hoş geldiniz, ${selectedType === 'coach' ? 'Koç' : 'Öğrenci'} girişi başarılı.`);
 
       // 4. Yönlendirme (Next.js 13+ router.push bazen cache takılabilir, bu yüzden bazen window.location kullanılır ama push yeterli)
-      if (userRole === 'coach') {
+      if (userRole === 'coach' || isAdminCoach(profile)) {
         router.push('/coach');
       } else {
         router.push('/student');
       }
 
-    } catch (error: any) {
-      toast.error(error.message || "Giriş yapılamadı.");
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Giriş yapılamadı.");
     } finally {
       setIsLoading(false);
     }

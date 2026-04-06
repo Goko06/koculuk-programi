@@ -14,6 +14,7 @@ import {
   ResponsiveContainer, Cell
 } from 'recharts';
 import { toast } from 'sonner';
+import { isAdminCoach } from '@/lib/roles';
 
 const THEME = {
   YKS: { primary: '#2563eb', secondary: '#8b5cf6', bg: 'bg-blue-50', text: 'text-blue-600' },
@@ -41,7 +42,16 @@ export default function ProfessionalReportsPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      const { data: sData } = await supabase.from('profiles').select('*').eq('coach_id', user.id).eq('role', 'student');
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role, full_name')
+        .eq('id', user.id)
+        .single();
+
+      const studentsQuery = supabase.from('profiles').select('*').eq('role', 'student');
+      const { data: sData } = isAdminCoach(profile)
+        ? await studentsQuery
+        : await studentsQuery.eq('coach_id', user.id);
       
       if (sData && sData.length > 0) {
         const sIds = sData.map(s => s.id);

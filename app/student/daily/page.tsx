@@ -92,22 +92,30 @@ function DailyReportContent() {
         .single();
 
       // Raporu Kaydet
-      const { error: entryError } = await supabase.from('daily_entries').insert([{
-        student_id: user.id, // Auth ID ile Profile ID aynı olduğu için direkt user.id
-        entry_date: new Date().toISOString().split('T')[0], // Sadece YYYY-MM-DD formatı
-        mood: mood,
-        total_duration_minutes: parseInt(totalDuration) || 0,
-        general_note: generalNote,
-        subjects_data: { 
-          studies: subjects, 
-          book: bookData 
-        }
-      }]);
-
-      if (entryError) {
-        console.error("DB Insert Error:", entryError);
-        throw entryError;
+      const { error } = await supabase.from('daily_entries').insert([{
+    student_id: user.id,
+    entry_date: new Date().toISOString().split('T')[0],
+    mood: mood,
+    total_duration_minutes: parseInt(totalDuration),
+    notes: generalNote, // SQL'de kolon 'notes' ise 'notes' yaz, 'general_note' ise onu yaz
+    subjects_data: {
+      studies: subjects.map(s => ({
+        subject: s.subject,
+        solved: parseInt(s.solved) || 0,
+        correct: parseInt(s.correct) || 0,
+        wrong: parseInt(s.wrong) || 0,
+        duration: parseInt(s.duration) || 0,
+        book_name: s.source // Koç panelinin aradığı anahtar
+      })),
+      book: {
+        name: bookData.name,
+        pages: parseInt(bookData.pages) || 0,
+        author: bookData.author
       }
+    }
+  }]);
+
+      
 
       // Koça bildirim gönder
       if (profile?.coach_id) {

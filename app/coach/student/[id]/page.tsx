@@ -4,13 +4,13 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-// Diğer state'lerin yanına ekle
 
 import {
-  History as HistoryIcon,Activity,TrendingUp, TrendingDown, Calendar, Target, CheckCircle2, 
+  History as HistoryIcon, Activity, TrendingUp, Calendar, Target, CheckCircle2, 
   Clock, ChevronLeft, Plus, BookOpen, MessageCircle, 
   AlertCircle, Sparkles, ClipboardList, Send, Trash2
 } from 'lucide-react';
+
 import {
   Dialog,
   DialogContent,
@@ -28,7 +28,6 @@ import {
 } from "@/components/ui/select";
 import { createClient } from '@/lib/supabase/client';
 import { toast } from 'sonner';
-
 // --- ENTEGRE EDİLMİŞ DEV MÜFREDAT HAVUZU ---
 const CURRICULUM_POOL: any = {
   "5": {
@@ -158,28 +157,14 @@ const fetchData = useCallback(async () => {
 
       // 3. KRİTİK VERİ İŞLEME (daily_entries)
       const rawData = dailyRes.data || [];
-      const processedEntries = rawData.map(entry => {
-        let subjects = entry.subjects_data;
-
-        // Veri tipine göre esnek parçalama
-        if (typeof subjects === 'string') {
-          try {
-            // Eğer string ise objeye çevir
-            subjects = JSON.parse(subjects);
-          } catch (e) {
-            console.error("Parse hatası, ham veri:", subjects);
-            subjects = { studies: [], book: {} };
-          }
-        }
-
-        // Eğer subjects hala bir obje değilse varsayılan değer ata
-        if (!subjects || typeof subjects !== 'object') {
-          subjects = { studies: [], book: {} };
-        }
-
-        return { ...entry, subjects_data: subjects };
-      });
-
+     const processedEntries = (dailyRes.data || []).map(entry => {
+  let data = entry.subjects_data;
+  if (typeof data === 'string') {
+    try { data = JSON.parse(data); } catch { data = { studies: [], book: {} }; }
+  }
+  return { ...entry, data }; // subjects_data'yı 'data' olarak kolayca kullanmak için
+});
+  
       setDailyEntries(processedEntries);
       console.log("İşlenmiş Veriler (Ekrana Basılacak):", processedEntries);
 
@@ -191,6 +176,7 @@ const fetchData = useCallback(async () => {
   }, [id, supabase, router]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+  
 
   // Sınıf ve Branşa göre müfredat filtreleme motoru
   const getAvailableCurriculum = () => {
@@ -389,81 +375,84 @@ const fetchData = useCallback(async () => {
           </Card>
           {/* GÜNLÜK PERFORMANS VE KİTAP TAKİBİ (daily_entries) */}
          
-<Card className="p-8 rounded-[3.5rem] bg-white border-none shadow-sm flex flex-col h-[700px]">
-            <div className="flex items-center gap-3 mb-8">
-                <div className="p-3 bg-orange-50 text-orange-500 rounded-2xl"><HistoryIcon size={24} /></div>
-                <h3 className="text-xl font-black italic uppercase text-slate-900">Günlük Çalışma Analizi</h3>
+<Card className="p-8 rounded-[3.5rem] bg-white border-none shadow-sm flex flex-col h-[720px]">
+  <div className="flex items-center gap-3 mb-8">
+    <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl">
+      <ClipboardList size={24} />
+    </div>
+    <h3 className="text-xl font-black italic uppercase tracking-tighter text-slate-900">
+      Günlük Çalışma Analizi
+    </h3>
+    <span className="ml-auto text-xs font-bold bg-blue-100 text-blue-700 px-4 py-1.5 rounded-full">
+      Son {dailyEntries.length} Gün
+    </span>
+  </div>
+
+  <div className="space-y-6 overflow-y-auto pr-3 custom-scrollbar flex-1">
+    {dailyEntries.length > 0 ? (
+      dailyEntries.map((entry: any) => {
+       const studies = entry.data?.studies || [];
+       const book = entry.data?.book || null;
+
+        // Günlük toplam soru ve doğruluk oranı hesaplama
+        const totalQuestions = studies.reduce((sum: number, s: any) => sum + (s.solved || 0), 0);
+        const totalCorrect = studies.reduce((sum: number, s: any) => sum + (s.correct || 0), 0);
+        const accuracy = totalQuestions > 0 ? Math.round((totalCorrect / totalQuestions) * 100) : 0;
+
+        return (
+    <div key={entry.id} className="bg-slate-50 border border-slate-200 rounded-[2.5rem] p-7 mb-6">
+      {/* KİTAP OKUMA TAKİBİ (Eğer veri varsa görünür) */}
+      {book && book.name && (
+        <div className="mb-6 p-5 bg-amber-50 border border-amber-100 rounded-2xl flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <BookOpen className="text-amber-600" />
+            <div>
+              <p className="font-black text-slate-900 uppercase text-xs">{book.name}</p>
+              <p className="text-[10px] text-slate-400 font-bold">{book.author}</p>
             </div>
-            
-            <div className="space-y-6 overflow-y-auto pr-2 custom-scrollbar flex-1">
-                {dailyEntries.length > 0 ? dailyEntries.map((entry) => {
-                    const studies = entry.subjects_data?.studies || [];
-                    const book = entry.subjects_data?.book || null;
+          </div>
+          <div className="text-right">
+            <p className="text-2xl font-black text-amber-600 leading-none">{book.pages}</p>
+            <p className="text-[9px] font-black uppercase text-slate-400">Sayfa</p>
+          </div>
+        </div>
+      )}
 
-                    return (
-                        <div key={entry.id} className="p-6 bg-slate-50 rounded-[2.5rem] border border-slate-200 transition-all">
-                            <div className="flex justify-between items-center mb-5 border-b border-slate-200 pb-4">
-                                <div className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase italic">
-                                    <Calendar size={14} className="text-slate-400" />
-                                    {entry.entry_date}
-                                </div>
-                                <div className="flex items-center gap-2 bg-white px-3 py-1 rounded-full text-[10px] font-black text-slate-900 shadow-sm border border-slate-100">
-                                    <Clock size={12} className="text-orange-500" /> {entry.total_duration_minutes} dk {entry.mood}
-                                </div>
-                            </div>
-
-                            {/* KİTAP VERİSİ GÖSTERİMİ */}
-                            {book && book.name && (
-                                <div className="mb-5 p-5 bg-blue-600 rounded-[2rem] text-white flex justify-between items-center shadow-lg relative overflow-hidden">
-                                    <div className="relative z-10 flex items-center gap-3">
-                                        <BookOpen size={20} />
-                                        <div className="flex flex-col">
-                                            <p className="text-[8px] font-black uppercase opacity-60">Okunan Kitap</p>
-                                            <h5 className="text-[12px] font-black uppercase italic leading-none">{book.name}</h5>
-                                            <p className="text-[9px] font-bold mt-1 opacity-80 italic">Yazar: {book.author}</p>
-                                        </div>
-                                    </div>
-                                    <div className="relative z-10 text-right">
-                                        <p className="text-lg font-black italic leading-none">{book.pages} <span className="text-[8px] not-italic opacity-60">SAYFA</span></p>
-                                    </div>
-                                    <BookOpen size={80} className="absolute right-[-15px] bottom-[-15px] opacity-10 rotate-12" />
-                                </div>
-                            )}
-
-                            {/* DERS VERİLERİ GÖSTERİMİ */}
-                            <div className="space-y-3">
-                                {studies.length > 0 ? studies.map((s: any, i: number) => (
-                                    <div key={i} className="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
-                                        <div>
-                                            <p className="text-[11px] font-black uppercase text-slate-800 leading-none">{s.subject}</p>
-                                            <p className="text-[9px] font-bold text-slate-400 mt-1.5 uppercase italic leading-none">{s.duration} Dakika Çalışıldı</p>
-                                        </div>
-                                        <div className="text-right">
-                                            <p className="text-[11px] font-black text-blue-600 leading-none">{s.solved} Soru</p>
-                                            <div className="flex gap-2 justify-end mt-1.5 font-bold text-[9px] uppercase italic">
-                                                <span className="text-green-500">D: {s.correct}</span>
-                                                <span className="text-red-500">Y: {s.wrong}</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )) : <p className="text-center text-[10px] text-slate-400 py-2">Ders verisi yok.</p>}
-                            </div>
-
-                            {entry.general_note && (
-                                <p className="mt-4 pt-3 border-t border-slate-100 italic text-[10px] text-slate-400 leading-relaxed">
-                                    " {entry.general_note} "
-                                </p>
-                            )}
-                        </div>
-                    );
-                }) : (
-                    <div className="flex flex-col items-center justify-center h-full opacity-20 py-20 italic">
-                        <Activity size={48} />
-                        <p className="text-[10px] font-black uppercase mt-3">Giriş Yapılmadı</p>
-                    </div>
-                )}
+      {/* DERS ÇALIŞMALARI */}
+      <div className="space-y-4">
+        {studies.map((s: any, idx: number) => (
+          <div key={idx} className="flex justify-between items-center bg-white p-5 rounded-2xl border border-slate-100">
+            <div>
+              <p className="font-black text-slate-900 uppercase text-xs italic">{s.subject}</p>
+              <p className="text-[10px] text-blue-500 font-bold mt-1 uppercase tracking-tighter">
+                {s.book_name || "Kaynak Belirtilmedi"} • {s.duration} dk
+              </p>
             </div>
-        </Card>
+            <div className="flex gap-6 items-center">
+               <div className="text-center">
+                 <p className="text-xl font-black text-slate-900 leading-none">{s.solved}</p>
+                 <p className="text-[8px] font-black text-slate-400 uppercase">Soru</p>
+               </div>
+               <div className="flex gap-3 text-[10px] font-black">
+                 <span className="text-emerald-600 bg-emerald-50 px-2 py-1 rounded-md">D: {s.correct}</span>
+                 <span className="text-red-500 bg-red-50 px-2 py-1 rounded-md">Y: {s.wrong}</span>
+               </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+      })
+    ) : (
+      <div className="flex flex-col items-center justify-center h-full py-16 text-center opacity-60">
+        <Activity size={64} className="mx-auto mb-4 text-slate-300" />
+        <p className="font-black uppercase tracking-widest text-sm">Henüz günlük çalışma kaydı yok</p>
+        <p className="text-xs mt-2 text-slate-400">Öğrenci ilk giriş yaptığında burada görünecek</p>
+      </div>
+    )}
+  </div>
+</Card>
           {/* DENEME ANALİZLERİ */}
           <Card className="p-8 rounded-[2.5rem] border-none shadow-sm bg-white">
              <div className="flex items-center gap-3 mb-8">

@@ -4,8 +4,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+// Diğer state'lerin yanına ekle
+
 import {
-  TrendingUp, TrendingDown, Calendar, Target, CheckCircle2, 
+  History as HistoryIcon,Activity,TrendingUp, TrendingDown, Calendar, Target, CheckCircle2, 
   Clock, ChevronLeft, Plus, BookOpen, MessageCircle, 
   AlertCircle, Sparkles, ClipboardList, Send, Trash2
 } from 'lucide-react';
@@ -102,15 +104,19 @@ const CURRICULUM_POOL: any = {
   },
   "AYT_SAY": {
     "Matematik (AYT)": ["Trigonometri", "Logaritma", "Diziler", "Limit ve Süreklilik", "Türev", "İntegral"],
+    "AYT Geometri": ["Analitik Geometri", "Dönüşüm Geometrisi", "Çemberin Analitiği", "Uzay Geometri (Prizma-Piramit)", "Vektörler", "Trigonometri-2"],
     "Fizik (AYT)": ["Vektörler", "Bağıl Hareket", "Newton Yasaları", "Atışlar", "Enerji ve Momentum", "Tork ve Denge", "Elektriksel Kuvvet", "Manyetizma", "Çembersel Hareket", "Harmonik Hareket", "Modern Fizik"],
     "Kimya (AYT)": ["Modern Atom Teorisi", "Gazlar", "Sıvı Çözeltiler", "Kimyasal Enerji", "Tepkime Hızı", "Kimyasal Denge", "Asit-Baz Dengesi", "Kimya ve Elektrik", "Karbon Kimyasına Giriş", "Organik Bileşikler"],
     "Biyoloji (AYT)": ["Denetleyici Sistemler", "Duyu Organları", "Destek ve Hareket", "Sindirim-Dolaşım-Solunum-Boşaltım", "Genden Proteine", "Canlılarda Enerji Dönüşümü", "Bitki Biyolojisi"]
   },
   "AYT_EA": {
     "Matematik (AYT)": ["Trigonometri", "Logaritma", "Diziler", "Limit-Türev-İntegral"],
+    "AYT Geometri": ["Analitik Geometri", "Dönüşüm Geometrisi", "Çemberin Analitiği", "Uzay Geometri (Prizma-Piramit)", "Vektörler", "Trigonometri-2"],
     "Edebiyat (AYT)": ["Şiir Bilgisi", "Edebi Sanatlar", "İslamiyet Öncesi-Halk-Divan Edebiyatı", "Tanzimat-Servet-i Fünun-Milli Edebiyat", "Cumhuriyet Dönemi Türk Edebiyatı", "Yazar-Eser"],
     "Tarih-1 (AYT)": ["Osmanlı Tarihi (Tamam)", "20. Yüzyıl Başlarında Dünya", "I. Dünya Savaşı", "Kurtuluş Savaşı", "Cumhuriyet İnkılapları"],
-    "Coğrafya-1 (AYT)": ["Ekosistem", "Nüfus Politikaları", "Türkiye Ekonomisi", "Türkiye'nin Jeopolitiği", "Küresel Ticaret"]
+    "Coğrafya-1 (AYT)": ["Ekosistem", "Nüfus Politikaları", "Türkiye Ekonomisi", "Türkiye'nin Jeopolitiği", "Küresel Ticaret"],
+    "Tarih-2 (Sözel)": ["Tarih Bilimine Giriş", "Uygarlığın Doğuşu", "İlk Türk İslam Devletleri", "Osmanlı Kültür ve Medeniyet", "Dünya Gücü Osmanlı", "Arayış Yılları", "En Uzun Yüzyıl", "20. Yüzyıl Başlarında Dünya", "II. Dünya Savaşı", "Soğuk Savaş Dönemi", "Yumuşama Dönemi", "Küreselleşen Dünya"],
+    "Coğrafya-2": ["Ekosistemlerin İşleyişi", "Nüfus Politikaları", "Ekonomik Faaliyetler", "Türkiye'nin İşlevsel Bölgeleri", "Küresel Ortam ve Ülkeler", "Çevre ve Toplum"]
   }
 };
 
@@ -122,38 +128,69 @@ export default function StudentDetailPage() {
   const [student, setStudent] = useState<any>(null);
   const [exams, setExams] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
+  const [dailyEntries, setDailyEntries] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [taskForm, setTaskForm] = useState({ subject: '', topic: '', targetQuestions: '', dueDate: '' });
 
   // Görev Formu State
-  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
-  const [taskForm, setTaskForm] = useState({
-    subject: '',
-    topic: '',
-    targetQuestions: '',
-    dueDate: ''
-  });
+  
+  
 
-  const fetchData = useCallback(async () => {
+const fetchData = useCallback(async () => {
+    if (!id) return;
     try {
       setLoading(true);
+      
+      // 1. Profil Verisi
       const { data: sData } = await supabase.from('profiles').select('*').eq('id', id).single();
       setStudent(sData);
 
-      const { data: eData } = await supabase.from('exams').select('*').eq('student_id', id).order('exam_date', { ascending: false });
-      setExams(eData || []);
+      // 2. Diğer Veriler (Denemeler ve Görevler)
+      const [examsRes, tasksRes, dailyRes] = await Promise.all([
+        supabase.from('exams').select('*').eq('student_id', id).order('exam_date', { ascending: true }),
+        supabase.from('student_tasks').select('*').eq('student_id', id).order('created_at', { ascending: false }),
+        supabase.from('daily_entries').select('*').eq('student_id', id).order('entry_date', { ascending: false })
+      ]);
 
-      const { data: tData } = await supabase.from('student_tasks').select('*').eq('student_id', id).order('created_at', { ascending: false });
-      setTasks(tData || []);
+      setExams(examsRes.data || []);
+      setTasks(tasksRes.data || []);
+
+      // 3. KRİTİK VERİ İŞLEME (daily_entries)
+      const rawData = dailyRes.data || [];
+      const processedEntries = rawData.map(entry => {
+        let subjects = entry.subjects_data;
+
+        // Veri tipine göre esnek parçalama
+        if (typeof subjects === 'string') {
+          try {
+            // Eğer string ise objeye çevir
+            subjects = JSON.parse(subjects);
+          } catch (e) {
+            console.error("Parse hatası, ham veri:", subjects);
+            subjects = { studies: [], book: {} };
+          }
+        }
+
+        // Eğer subjects hala bir obje değilse varsayılan değer ata
+        if (!subjects || typeof subjects !== 'object') {
+          subjects = { studies: [], book: {} };
+        }
+
+        return { ...entry, subjects_data: subjects };
+      });
+
+      setDailyEntries(processedEntries);
+      console.log("İşlenmiş Veriler (Ekrana Basılacak):", processedEntries);
+
     } catch (error) {
-      console.error(error);
+      console.error("Genel veri çekme hatası:", error);
     } finally {
       setLoading(false);
     }
-  }, [id, supabase]);
+  }, [id, supabase, router]);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   // Sınıf ve Branşa göre müfredat filtreleme motoru
   const getAvailableCurriculum = () => {
@@ -178,8 +215,7 @@ export default function StudentDetailPage() {
 
     return {};
   };
-
-  const handleCreateTask = async (e: React.FormEvent) => {
+   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       const { error } = await supabase.from('student_tasks').insert([{
@@ -351,7 +387,83 @@ export default function StudentDetailPage() {
               )}
             </div>
           </Card>
+          {/* GÜNLÜK PERFORMANS VE KİTAP TAKİBİ (daily_entries) */}
+         
+<Card className="p-8 rounded-[3.5rem] bg-white border-none shadow-sm flex flex-col h-[700px]">
+            <div className="flex items-center gap-3 mb-8">
+                <div className="p-3 bg-orange-50 text-orange-500 rounded-2xl"><HistoryIcon size={24} /></div>
+                <h3 className="text-xl font-black italic uppercase text-slate-900">Günlük Çalışma Analizi</h3>
+            </div>
+            
+            <div className="space-y-6 overflow-y-auto pr-2 custom-scrollbar flex-1">
+                {dailyEntries.length > 0 ? dailyEntries.map((entry) => {
+                    const studies = entry.subjects_data?.studies || [];
+                    const book = entry.subjects_data?.book || null;
 
+                    return (
+                        <div key={entry.id} className="p-6 bg-slate-50 rounded-[2.5rem] border border-slate-200 transition-all">
+                            <div className="flex justify-between items-center mb-5 border-b border-slate-200 pb-4">
+                                <div className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase italic">
+                                    <Calendar size={14} className="text-slate-400" />
+                                    {entry.entry_date}
+                                </div>
+                                <div className="flex items-center gap-2 bg-white px-3 py-1 rounded-full text-[10px] font-black text-slate-900 shadow-sm border border-slate-100">
+                                    <Clock size={12} className="text-orange-500" /> {entry.total_duration_minutes} dk {entry.mood}
+                                </div>
+                            </div>
+
+                            {/* KİTAP VERİSİ GÖSTERİMİ */}
+                            {book && book.name && (
+                                <div className="mb-5 p-5 bg-blue-600 rounded-[2rem] text-white flex justify-between items-center shadow-lg relative overflow-hidden">
+                                    <div className="relative z-10 flex items-center gap-3">
+                                        <BookOpen size={20} />
+                                        <div className="flex flex-col">
+                                            <p className="text-[8px] font-black uppercase opacity-60">Okunan Kitap</p>
+                                            <h5 className="text-[12px] font-black uppercase italic leading-none">{book.name}</h5>
+                                            <p className="text-[9px] font-bold mt-1 opacity-80 italic">Yazar: {book.author}</p>
+                                        </div>
+                                    </div>
+                                    <div className="relative z-10 text-right">
+                                        <p className="text-lg font-black italic leading-none">{book.pages} <span className="text-[8px] not-italic opacity-60">SAYFA</span></p>
+                                    </div>
+                                    <BookOpen size={80} className="absolute right-[-15px] bottom-[-15px] opacity-10 rotate-12" />
+                                </div>
+                            )}
+
+                            {/* DERS VERİLERİ GÖSTERİMİ */}
+                            <div className="space-y-3">
+                                {studies.length > 0 ? studies.map((s: any, i: number) => (
+                                    <div key={i} className="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-100 shadow-sm">
+                                        <div>
+                                            <p className="text-[11px] font-black uppercase text-slate-800 leading-none">{s.subject}</p>
+                                            <p className="text-[9px] font-bold text-slate-400 mt-1.5 uppercase italic leading-none">{s.duration} Dakika Çalışıldı</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="text-[11px] font-black text-blue-600 leading-none">{s.solved} Soru</p>
+                                            <div className="flex gap-2 justify-end mt-1.5 font-bold text-[9px] uppercase italic">
+                                                <span className="text-green-500">D: {s.correct}</span>
+                                                <span className="text-red-500">Y: {s.wrong}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )) : <p className="text-center text-[10px] text-slate-400 py-2">Ders verisi yok.</p>}
+                            </div>
+
+                            {entry.general_note && (
+                                <p className="mt-4 pt-3 border-t border-slate-100 italic text-[10px] text-slate-400 leading-relaxed">
+                                    " {entry.general_note} "
+                                </p>
+                            )}
+                        </div>
+                    );
+                }) : (
+                    <div className="flex flex-col items-center justify-center h-full opacity-20 py-20 italic">
+                        <Activity size={48} />
+                        <p className="text-[10px] font-black uppercase mt-3">Giriş Yapılmadı</p>
+                    </div>
+                )}
+            </div>
+        </Card>
           {/* DENEME ANALİZLERİ */}
           <Card className="p-8 rounded-[2.5rem] border-none shadow-sm bg-white">
              <div className="flex items-center gap-3 mb-8">
@@ -395,12 +507,59 @@ export default function StudentDetailPage() {
                     %{tasks.length > 0 ? ((tasks.filter(t => t.status === 'completed').length / tasks.length) * 100).toFixed(0) : 0}
                  </span>
                </div>
-               <div className="flex justify-between items-center py-4 border-b border-white/10">
-                 <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest italic">Ortalama Net</span>
-                 <span className="font-black italic text-lg text-blue-400">
-                    {exams.length > 0 ? (exams.reduce((acc, curr) => acc + Number(curr.total_net), 0) / exams.length).toFixed(1) : 0}
-                 </span>
-               </div>
+               <div className="space-y-3 py-4 border-b border-white/10">
+  {/* TYT ORTALAMASI */}
+  {student?.class_level !== '8' && (
+    <div className="flex justify-between items-center">
+      <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest italic flex items-center gap-2">
+        <div className="w-1.5 h-1.5 bg-blue-500 rounded-full" /> TYT Ortalaması
+      </span>
+      <span className="font-black italic text-lg text-blue-400">
+        {(() => {
+          const tytExams = exams.filter(e => e.exam_type === 'TYT');
+          return tytExams.length > 0 
+            ? (tytExams.reduce((acc, curr) => acc + Number(curr.total_net), 0) / tytExams.length).toFixed(1) 
+            : "0";
+        })()}
+      </span>
+    </div>
+  )}
+
+  {/* AYT ORTALAMASI */}
+  {student?.class_level !== '8' && (
+    <div className="flex justify-between items-center">
+      <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest italic flex items-center gap-2">
+        <div className="w-1.5 h-1.5 bg-purple-500 rounded-full" /> AYT Ortalaması
+      </span>
+      <span className="font-black italic text-lg text-purple-400">
+        {(() => {
+          const aytExams = exams.filter(e => e.exam_type === 'AYT');
+          return aytExams.length > 0 
+            ? (aytExams.reduce((acc, curr) => acc + Number(curr.total_net), 0) / aytExams.length).toFixed(1) 
+            : "0";
+        })()}
+      </span>
+    </div>
+  )}
+
+  {/* LGS ORTALAMASI (Sadece 8. Sınıflar İçin) */}
+  {student?.class_level === '8' && (
+    <div className="flex justify-between items-center">
+      <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest italic flex items-center gap-2">
+        <div className="w-1.5 h-1.5 bg-orange-500 rounded-full" /> LGS Ortalaması
+      </span>
+      <span className="font-black italic text-lg text-orange-400">
+        {(() => {
+          const lgsExams = exams.filter(e => e.exam_type === 'LGS');
+          return lgsExams.length > 0 
+            ? (lgsExams.reduce((acc, curr) => acc + Number(curr.total_net), 0) / lgsExams.length).toFixed(1) 
+            : "0";
+        })()}
+      </span>
+    </div>
+  )}
+</div>
+
                <div className="flex justify-between items-center py-4">
                  <span className="text-[10px] font-bold uppercase text-slate-400 tracking-widest italic">Sistem Kaydı</span>
                  <span className="font-black italic text-slate-500 text-xs">
@@ -434,14 +593,8 @@ export default function StudentDetailPage() {
               </Button>
            </Card>
 
-           {/* Hızlı Erişim Kartı */}
-           <Card className="p-6 rounded-[2rem] border-none shadow-sm bg-blue-50/50 border border-blue-100/50">
-              <p className="text-[9px] font-black uppercase text-blue-600 tracking-widest mb-4 text-center italic">Hızlı İşlemler</p>
-              <div className="grid grid-cols-2 gap-3">
-                 <Button variant="ghost" className="h-12 bg-white rounded-xl font-bold text-[10px] uppercase hover:bg-blue-600 hover:text-white transition-all shadow-sm">Program Yaz</Button>
-                 <Button variant="ghost" className="h-12 bg-white rounded-xl font-bold text-[10px] uppercase hover:bg-blue-600 hover:text-white transition-all shadow-sm">Veli Arandı</Button>
-              </div>
-           </Card>
+           
+           
         </div>
       </div>
     </div>

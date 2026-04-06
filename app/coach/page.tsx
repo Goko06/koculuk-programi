@@ -73,6 +73,12 @@ export default function CoachPage() {
         .single();
       
       if (coachProfile) setCoachName(coachProfile.full_name);
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    
+    if (sessionError || !session) {
+      router.push("/login");
+      return;
+    }
 
       const { data: sData } = await supabase.from('profiles').select('*').eq('coach_id', user.id).eq('role', 'student').order('full_name', { ascending: true });
       const currentStudents = (sData as any[]) || [];

@@ -4,8 +4,10 @@ import { NextResponse } from 'next/server';
 export async function POST(request: Request) {
   try {
     // Environment variables kontrolü
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      console.error("Missing Supabase environment variables");
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY;
+    if (!supabaseUrl || !supabaseServiceRoleKey) {
+      console.error("Missing Supabase environment variables", { supabaseUrl: !!supabaseUrl, serviceRoleKey: !!supabaseServiceRoleKey });
       return NextResponse.json({ error: "Server configuration error" }, { status: 500 });
     }
 
@@ -13,8 +15,8 @@ export async function POST(request: Request) {
 
     // Admin yetkili client (Service Role Key gereklidir)
     const supabaseAdmin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY,
+      supabaseUrl,
+      supabaseServiceRoleKey,
       {
         auth: {
           autoRefreshToken: false,

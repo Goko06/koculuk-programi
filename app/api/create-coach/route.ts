@@ -4,11 +4,17 @@ import { COACH_ROLE } from '@/lib/roles';
 
 export async function POST(request: Request) {
   try {
+    // Environment variables kontrolü
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.error("Missing Supabase environment variables");
+      return NextResponse.json({ error: "Server configuration error" }, { status: 500 });
+    }
+
     const { email, password, fullName, phone, parentAdminId, logoBase64 } = await request.json();
 
     const supabaseAdmin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_ROLE_KEY,
       {
         auth: {
           autoRefreshToken: false,

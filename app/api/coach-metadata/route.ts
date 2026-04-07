@@ -2,6 +2,12 @@ import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 
 export async function GET(request: Request) {
+  // Environment variables kontrolü
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.error("Missing Supabase environment variables");
+    return NextResponse.json({ error: "Server configuration error" }, { status: 500 });
+  }
+
   const url = new URL(request.url);
   const coachId = url.searchParams.get('coachId');
 
@@ -10,8 +16,8 @@ export async function GET(request: Request) {
   }
 
   const supabaseAdmin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
     {
       auth: {
         autoRefreshToken: false,

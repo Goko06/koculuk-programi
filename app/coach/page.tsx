@@ -81,9 +81,10 @@ export default function CoachPage() {
     phone: '',
     password: '',
   });
+  const [coachLogoFile, setCoachLogoFile] = useState<File | null>(null);
+  const [coachLogoPreview, setCoachLogoPreview] = useState<string | null>(null);
   const [isCoachModalOpen, setIsCoachModalOpen] = useState(false);
 
-  
   const router = useRouter();
 
   const fetchData = useCallback(async () => {
@@ -244,23 +245,37 @@ export default function CoachPage() {
     }
   };
 
+  const readFileAsDataURL = (file: File) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
   const handleCreateCoach = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
     try {
       const { data: auth } = await supabase.auth.getUser();
+      let logoBase64: string | null = null;
+      if (coachLogoFile) {
+        logoBase64 = await readFileAsDataURL(coachLogoFile);
+      }
       const res = await fetch('/api/create-coach', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...coachForm,
           parentAdminId: auth.user?.id,
+          logoBase64,
         }),
       });
       const result = await res.json();
       if (!res.ok || !result.success) throw new Error(result.error || 'Koç oluşturulamadı');
       toast.success('Alt koç başarıyla eklendi.');
       setCoachForm({ fullName: '', email: '', phone: '', password: '' });
+      setCoachLogoFile(null);
+      setCoachLogoPreview(null);
       setIsCoachModalOpen(false);
       fetchData();
     } catch (error: unknown) {
@@ -464,6 +479,8 @@ export default function CoachPage() {
                 setIsCoachModalOpen(open);
                 if (!open) {
                   setCoachForm({ fullName: '', email: '', phone: '', password: '' });
+                  setCoachLogoFile(null);
+                  setCoachLogoPreview(null);
                 }
               }}
             >
@@ -485,6 +502,22 @@ export default function CoachPage() {
                   <Input autoComplete="off" type="email" placeholder="E-posta" required value={coachForm.email} onChange={(e) => setCoachForm({ ...coachForm, email: e.target.value })} className="h-14 rounded-2xl bg-slate-50 border-none font-bold" />
                   <Input autoComplete="off" placeholder="Telefon" required value={coachForm.phone} onChange={(e) => setCoachForm({ ...coachForm, phone: e.target.value })} className="h-14 rounded-2xl bg-slate-50 border-none font-bold" />
                   <Input autoComplete="new-password" type="password" placeholder="Şifre" required value={coachForm.password} onChange={(e) => setCoachForm({ ...coachForm, password: e.target.value })} className="h-14 rounded-2xl bg-slate-50 border-none font-bold" />
+                  <div className="space-y-2">
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Koç Logo (opsiyonel)</label>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] ?? null;
+                        setCoachLogoFile(file);
+                        setCoachLogoPreview(file ? URL.createObjectURL(file) : null);
+                      }}
+                      className="block w-full text-sm text-slate-600 file:rounded-2xl file:border-0 file:bg-slate-100 file:px-4 file:py-3 file:text-sm file:font-bold file:text-slate-700"
+                    />
+                    {coachLogoPreview && (
+                      <img src={coachLogoPreview} alt="Logo önizleme" className="h-24 w-24 rounded-2xl border border-slate-200 object-contain mt-2" />
+                    )}
+                  </div>
                   <Button type="submit" disabled={isSubmitting} className="w-full h-14 bg-blue-600 hover:bg-slate-900 rounded-[1.5rem] font-black uppercase tracking-[0.2em] text-xs">
                     {isSubmitting ? "Kaydediliyor..." : "Koçu Oluştur"}
                   </Button>

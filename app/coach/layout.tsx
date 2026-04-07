@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { 
-  Users, BookOpen, BarChart3, Settings, LogOut, Menu 
+  Users, BookOpen, BarChart3, Settings, LogOut, Menu, X 
 } from 'lucide-react';
 import Image from 'next/image';
 import { createClient } from '@/lib/supabase/client';
@@ -17,6 +17,8 @@ export default function CoachLayout({
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [checkingAccess, setCheckingAccess] = useState(true);
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [pageTitle, setPageTitle] = useState('Koçluk Programı');
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createClient();
@@ -48,6 +50,8 @@ export default function CoachLayout({
           return;
         }
 
+        setLogoUrl(user.user_metadata?.logo || null);
+
         const { data: profile } = await supabase
           .from('profiles')
           .select('role, status, full_name')
@@ -66,12 +70,20 @@ export default function CoachLayout({
           router.push('/login');
           return;
         }
+
+        if (profile?.full_name) {
+          setPageTitle(`${profile.full_name} Koçluk Programı`);
+        }
       } finally {
         setCheckingAccess(false);
       }
     };
     checkCoachAccess();
   }, [router, supabase]);
+
+  useEffect(() => {
+    document.title = pageTitle;
+  }, [pageTitle]);
 
   if (checkingAccess) {
     return <div className="h-screen flex items-center justify-center font-black text-blue-600 text-xs uppercase">Erişim kontrol ediliyor...</div>;
@@ -80,18 +92,39 @@ export default function CoachLayout({
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
       {/* Sidebar */}
-      <div className={`bg-white border-r border-slate-200 w-72 transition-all duration-300 fixed inset-y-0 left-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:static lg:translate-x-0 lg:flex-shrink-0 z-50`}>
+      {sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-slate-900/20 backdrop-blur-sm z-40 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      <div className={`bg-white border-r border-slate-200 w-72 transition-all duration-300 fixed inset-y-0 left-0 top-0 h-full ${sidebarOpen ? 'translate-x-0 opacity-100 pointer-events-auto' : '-translate-x-full opacity-0 pointer-events-none'} lg:static lg:translate-x-0 lg:opacity-100 lg:pointer-events-auto lg:flex-shrink-0 z-50`}>
         
         <div className="p-6 border-b border-slate-100">
-          <div className="flex items-center justify-center mb-2">
-            <Image 
-              src="/logo.png" 
-              alt="Göksel Atak Eğitim Kurumları" 
-              width={200} 
-              height={65}
-              priority
-              className="mx-auto"
-            />
+          <div className="flex items-center justify-between mb-2">
+            {logoUrl ? (
+              <img
+                src={logoUrl}
+                alt="Koç Logo"
+                className="mx-auto h-[65px] object-contain"
+              />
+            ) : (
+              <Image 
+                src="/logo.png" 
+                alt="Göksel Atak Eğitim Kurumları" 
+                width={200} 
+                height={65}
+                priority
+                className="mx-auto"
+              />
+            )}
+            <button 
+              onClick={() => setSidebarOpen(false)}
+              className="lg:hidden p-2 rounded-lg hover:bg-slate-100"
+              aria-label="Menüyü kapat"
+            >
+              <X size={20} />
+            </button>
           </div>
           <p className="text-center text-xs text-slate-500 mt-2">Koç Paneli</p>
         </div>

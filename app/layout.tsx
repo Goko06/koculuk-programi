@@ -3,7 +3,7 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 
 export const metadata: Metadata = {
-  title: "Eğitim Koçluk Programı",
+  title: "Koçluk Programı",
   description: "YKS, LGS ve Ara Sınıflar İçin Online Koçluk Sistemi",
 };
 

@@ -4,7 +4,7 @@ import { COACH_ROLE } from '@/lib/roles';
 
 export async function POST(request: Request) {
   try {
-    const { email, password, fullName, phone, parentAdminId } = await request.json();
+    const { email, password, fullName, phone, parentAdminId, logoBase64 } = await request.json();
 
     const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -17,11 +17,16 @@ export async function POST(request: Request) {
       }
     );
 
+    const userMetadata: Record<string, unknown> = { role: COACH_ROLE, full_name: fullName };
+    if (logoBase64) {
+      userMetadata.logo = logoBase64;
+    }
+
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email,
       password,
       email_confirm: true,
-      user_metadata: { role: COACH_ROLE, full_name: fullName },
+      user_metadata: userMetadata,
     });
 
     if (authError) {

@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { 
-  Home, BookOpen, Target, BarChart3, User, LogOut, Menu, Calendar, Settings 
+  Home, BookOpen, Target, BarChart3, User, LogOut, Menu, Calendar, Settings, X 
 } from 'lucide-react';
 import Image from 'next/image';
 import { createClient } from '@/lib/supabase/client';
@@ -17,6 +17,8 @@ export default function StudentLayout({
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [user, setUser] = useState<SupabaseUser | null>(null);
+  const [coachLogoUrl, setCoachLogoUrl] = useState<string | null>(null);
+  const [pageTitle, setPageTitle] = useState('Koçluk Programı');
   const pathname = usePathname();
   const supabase = createClient();
 
@@ -24,9 +26,29 @@ export default function StudentLayout({
     const getUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       setUser(user);
+      if (!user) return;
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('coach_id')
+        .eq('id', user.id)
+        .single();
+
+      if (!profile?.coach_id) return;
+      const response = await fetch(`/api/coach-metadata?coachId=${profile.coach_id}`);
+      if (!response.ok) return;
+      const coachMeta = await response.json();
+      setCoachLogoUrl(coachMeta.logo || null);
+      if (coachMeta.full_name) {
+        setPageTitle(`${coachMeta.full_name} Koçluk Programı`);
+      }
     };
     getUser();
-  }, []);
+  }, [supabase]);
+
+  useEffect(() => {
+    document.title = pageTitle;
+  }, [pageTitle]);
 
   // Menü öğelerini güncelledik
   const menuItems = [
@@ -48,20 +70,41 @@ export default function StudentLayout({
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
       {/* Sidebar */}
-      <div className={`bg-white border-r border-slate-200 w-72 transition-all duration-300 fixed inset-y-0 left-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:static lg:translate-x-0 lg:flex-shrink-0 z-50`}>
+      {sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-slate-900/20 backdrop-blur-sm z-40 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      <div className={`bg-white border-r border-slate-200 w-72 transition-all duration-300 fixed inset-y-0 left-0 top-0 h-full ${sidebarOpen ? 'translate-x-0 opacity-100 pointer-events-auto' : '-translate-x-full opacity-0 pointer-events-none'} lg:static lg:translate-x-0 lg:opacity-100 lg:pointer-events-auto lg:flex-shrink-0 z-50`}>
         
         {/* Logo */}
         <div className="p-6 border-b border-slate-100">
-          <div className="flex items-center justify-center mb-2">
-            <Image 
-              src="/logo.png" 
-              alt="Logo" 
-              width={220} 
-              height={70}
-              priority
-              style={{ height: 'auto' }}
-              className="mx-auto"
-            />
+          <div className="flex items-center justify-between mb-2">
+            {coachLogoUrl ? (
+              <img
+                src={coachLogoUrl}
+                alt="Koç Logo"
+                className="mx-auto h-[70px] object-contain"
+              />
+            ) : (
+              <Image 
+                src="/logo.png" 
+                alt="Logo" 
+                width={220} 
+                height={70}
+                priority
+                style={{ height: 'auto' }}
+                className="mx-auto"
+              />
+            )}
+            <button 
+              onClick={() => setSidebarOpen(false)}
+              className="lg:hidden p-2 rounded-lg hover:bg-slate-100"
+              aria-label="Menüyü kapat"
+            >
+              <X size={20} />
+            </button>
           </div>
           <p className="text-center text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Eğitim Koçluk Sistemi</p>
         </div>

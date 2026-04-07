@@ -80,7 +80,7 @@ export default function CoachLayout({
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
       {/* Sidebar */}
-      <div className={`bg-white border-r border-slate-200 w-72 flex-shrink-0 transition-all duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 z-50`}>
+      <div className={`bg-white border-r border-slate-200 w-72 transition-all duration-300 fixed inset-y-0 left-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:static lg:translate-x-0 lg:flex-shrink-0 z-50`}>
         
         <div className="p-6 border-b border-slate-100">
           <div className="flex items-center justify-center mb-2">
